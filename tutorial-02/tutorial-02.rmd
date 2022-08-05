@@ -1,0 +1,286 @@
+---
+title: "ETC5521 Tutorial 2"
+subtitle: "Deconstructing an exploratory data analysis"
+author: "Prof. Di Cook"
+date: "Week 2"
+output:
+  html_document:
+    toc: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, 
+                      fig.path = "images/tutorial02/",
+                      fig.align = "center")
+```
+
+```{r, include=FALSE}
+library(tidyverse)
+library(patchwork)
+library(lubridate)
+
+# Set default theme for document
+ggplot2::theme_set(theme_bw())
+```
+
+# 🎯 Objectives
+
+Constructing, planning and evaluating an exploratory data analysis are important skills. This tutorial is an exercise in reading and digesting a really good analysis. Your goal is to understand the analysis, reproduce it, and the choices the analysts made, and why these were would be considered high quality.  
+
+# 🔧Preparation 
+
+Read the [article](https://vita.had.co.nz/papers/bay-area-blues.pdf), authored by Hadley Wickham, Deborah F. Swayne, and David Poole. It appeared in an editing volume "Beautiful Data" edited by Jeff Hammerbacher and Toby Segaran. Not all the chapters in the book are good examples of data analysis, though. Note that the code for reproducing their analysis can be found at https://github.com/hadley/sfhousing. 
+
+# Exercise 1: Why is this an EDA?
+
+In the lecture notes, we stated that EDA starts with the data. However, this isn't how this paper suggests the analysis started. The introduction contains a question:
+
+> What can we learn about the way prices rose and fell throughout a single region and across a wide range of prices?
+
+Why isn't this a question, as one would need to have in order to conduct a _confirmatory analysis_?
+
+  * In a confirmatory analysis, we usually provide evidence that a **hypothesis** is true/false.
+  
+    * This includes statistical tests, significance tests etc.
+    
+    * *e.g.* How confident are you that the prices rose by 10%?
+    
+  * The question does not form a hypothesis, it serves more as a theory or 'starting point' of the data analysis process
+    
+    * it is interested in discovering patterns of the weekly sales of residential real estates prices across San Francisco Bay Area
+    
+    * like in tutorial 1, we stated that EDA is mostly guided by **intuition or expectations** help us better understand the data
+    
+# Exercise 2: Reproducing the analysis
+
+See [link](https://github.com/hadley/sfhousing) for the analysis. The main data file is `house-sales.csv`. 
+
+You can read the data in directly from the web site using this code:
+
+```{r, echo=TRUE, message=FALSE}
+# Read-in data
+sales <- read_csv("https://raw.githubusercontent.com/hadley/sfhousing/master/house-sales.csv")
+```
+
+* Data consists of the weekly sales of residential real estates (houses, apartments, condominiums, etc.) for the Bay Area produced by [San Francisco Chronicle](http://www.sfgate.com/homesales/).
+
+## (A) What's in the data?
+
+Is the data in *tidy form*? 
+
+  * Each observation have its own row
+    * Each row corresponds to a single sale of residential real estate for a given week
+    
+  * Each variable has its own column
+    * geographical information, price, property information, temporal information
+    
+  * Each value has its own cell
+
+Of the variables in the data, which are numeric, categorical, temporal?  
+
+```{r}
+sales %>% 
+  glimpse()
+```
+
+  * *numeric*: `price`, `br`, `lsqft`, `bsqft`
+  * *categorical*: `county`, `city`, `zip`, `street`
+  * *temporal*: `year`, `date`, `datesold`
+
+What would be an appropriate plot to make to examine the 
+
+--> refer to https://www.data-to-viz.com/
+  
+(a) numeric variables
+  * scatter plot
+      
+(b) categorical variables
+  * bar charts, 
+  * pie charts
+  * mosaic 
+  
+(c) a categorical and numeric variable
+  * facet by the categorical variable
+    * _e.g._ box plots or density plots
+      
+(d) a temporal variable and a numeric variable
+  * time series plot, connect lines to indicate time
+  
+
+## (B) Time series plots
+
+Reproduce the time series plots of weekly average price and volume of sales. 
+
+```{r timeplot}
+# Compute weekly average price & volume of sales
+sales_weekly <- sales %>% 
+  # remove observations without price
+  filter(!is.na(price)) %>% 
+  group_by(date) %>% 
+  summarise(av_price = mean(price, na.rm = TRUE), # Average sale price for the week
+            volume = n()) # no. of sales made in the week
+```
+
+```{r}
+# Weekly average sales price  
+p1 <- 
+  ggplot(data = sales_weekly,
+         aes(x = date, y = av_price)) +
+  geom_line() +
+  scale_y_continuous(name = "Average price (millions)",
+                     labels = scales::label_comma(scale = 1e-6)
+                     ) +
+  scale_x_date(name = "",
+               date_breaks = "1 year",
+               minor_breaks = NULL,
+               date_labels = "%Y" # see ?scale_x_date, refer to date_labels
+               )
+
+# Total number of real estate sold for a given week
+p2 <-
+  ggplot(data = sales_weekly, 
+         aes(x = date, y = volume)) +
+  geom_line() +
+  scale_y_continuous("Number of sales", 
+                     breaks = seq(500,3000,500)) +
+  scale_x_date("", 
+               date_breaks = "1 years", 
+               minor_breaks = NULL, 
+               date_labels = "%Y")
+
+# install.packages("patchwork")
+# https://patchwork.data-imaginist.com/articles/guides/layout.html
+p1 / p2
+```
+
+* increasing trend in average prices until June 2007, then a drop to the 2008-11-16
+
+* some seasonal effects in the total number of sales
+  * from mid 2006 to early 2008, sales volume decreases
+  * sharpness of the drop in early 2008 may reflect winter slowdown in sales
+
+## (C) Correlation between series
+
+It looks like volume goes down as price goes up. There is a better plot to make to examine this. What is it? Make the plot. After making the plot, report what you learn about the apparent correlation.
+
+```{r scatterplot}
+# Scatter plot
+ggplot(sales_weekly, 
+       aes(x = av_price, y = volume)) +
+  geom_point() +
+  theme(aspect.ratio = 1)
+
+# Compute correlation manually
+sales_weekly %>% 
+  filter(!is.na(av_price)) %>% 
+  summarise(correlation = cor(av_price, volume))
+```
+
+* There appears to a weak, negative correlation.
+
+## (D) Geographic differences
+
+Think about potential plots you might make for examining differences by geographic region (as measured by zip, county or city). Make a plot of the *distribution of prices*, and report what you learn.
+
+```{r geo}
+# Boxplot
+ggplot(sales, 
+       aes(x = fct_reorder(county, price, .fun = median), 
+           y = price)) +
+  geom_boxplot() + 
+  # Log transformation
+  scale_y_log10() + 
+  labs(x = "log price") +
+  coord_flip()
+```
+
+```{r}
+# Ridge line plot
+library(ggridges)
+
+ggplot(sales,
+       aes(x = log(price), 
+           y = fct_reorder(county, price))
+       ) +
+  geom_density_ridges(alpha = 0.6, fill = "steelblue")
+```
+
+* Marin County has the highest prices on average, and San Joaquin the lowest. 
+* The lowest median priced house was sold in San Joaquin.
+* The highest priced properties and lowest priced are pretty similar from one county to another - that is, the variability within county is large.
+
+# Exercise 3: The Rich Get Richer and the Poor Get Poorer
+
+In the section "The Rich Get Richer and the Poor Get Poorer" there are some interesting transformations of the data, and unusual types of plots. Explain why looking at proportional change in value refines the view of price movement in different higher vs lower priced properties. 
+
+```{r}
+# --- refer to https://github.com/hadley/sfhousing/blob/master/explore-deciles.r
+
+# Compute monthly deciles
+# midmonth <- function(date) {
+#   lubridate::mday(date) <- 15
+#   date
+# }
+
+# Compute value of each deciles
+# deciles <- sales %>% 
+#   mutate(date = midmonth(date)) %>%
+#   group_by(date) %>% 
+#   summarise(decile = seq_len(9),
+#             value = quantile(price, seq(0.1, 0.9, by = 0.1), na.rm = T),
+#             med = median(price, na.rm = T),
+#             .groups = "drop") 
+
+
+deciles <- sales %>% 
+  # extracted year & month
+  mutate(year = year(date),
+         month = month(date)) %>% 
+  group_by(year, month) %>% 
+  summarise(decile = seq_len(9),
+            value = quantile(price, seq(0.1, 0.9, by = 0.1), na.rm = T),
+            med = median(price, na.rm = T),
+            .groups = "drop")
+
+# For each decile, compute index 
+deciles <- deciles %>% 
+  group_by(decile) %>% 
+  mutate(index = value / value[1])
+
+deciles <- deciles %>% 
+  mutate(date = ymd(paste0(year, "-", month, "-", 1)))
+
+deciles %>% 
+  ggplot() +
+  geom_line(aes(x = date, y = index, group = decile, colour = decile)) +
+  geom_hline(yintercept = 1, size = 1) +
+  colorspace::scale_colour_continuous_sequential() +
+  theme(legend.position = "none") +
+  scale_x_date("", 
+               date_breaks = "1 year", 
+               minor_breaks = NULL, 
+               date_labels = "%Y")
+```
+
+  * The deciles are the nine prices for which 10%, 20% ... 90% of houses cost less
+    
+    * *e.g.* 10% of all houses lie below $x as of a given month
+    
+    * 50% percentile (line in the middle) is the median value
+  
+  * The transformation observe the changes relative to the initial price
+  
+    * all curves produced will start from 1, showing the initial (starting) value for a given quantile.
+    
+  * (from readings) cheaper houses (the lighter or grey-er lines) seem to peak higher and earlier (mid-2005), and then drop more rapidly thereafter
+  
+  * (from readings) the cheapest houses, in the lowest decile, lost 43% of their 2003 value compared to only 9% for the most expensive houses
+  
+  
+# Exercise 4: Anything surprising?
+
+Were there any findings that surprised the authors? Or would surprise you?
+
+# Exercise 5: Additional resources
+
+Some of the findings were compared against information gathered from external sources. Can you point to an example of this, and how the other information was used to support or question the finding?
