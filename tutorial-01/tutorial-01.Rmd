@@ -1,0 +1,227 @@
+---
+title: "ETC5521 Tutorial 1"
+subtitle: "Introduction to exploratory data analysis"
+author: "Prof. Di Cook"
+date: "Week 1"
+output:
+  html_document:
+    toc: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = FALSE,
+  warning = FALSE,
+  message = FALSE
+)
+
+options(width = 80, digits = 3)
+
+library(tidyverse)
+```
+
+# 🎯 Objectives
+
+This is the first tutorial meeting of the semester. It is just after the first lecture, which makes it difficult to plan to cover any lecture material here. The goal, then, is to get to know other people in the class with you, and your tutors, and to get started thinking about exploratory data analysis. 
+
+# 🛠 Preparation 
+
+The reading for this week is [The Landscape of R Packages for Automated Exploratory Data Analysis](https://arxiv.org/pdf/1904.02101.pdf). This is a lovely summary of software available that is considered to do exploratory data analysis (EDA). (Note: Dr Cook would not consider what these packages do to actually be EDA, but more on this later.) This reading will be the basis of the tutorial exercises today.
+
+# Exercise 1.1: Introduce yourself
+
+In the chat window, say hello, and if you feel comfortable tell us something fun about yourself, or what you have done this last week.
+
+# Exercise 1.2: Trying out EDA software
+
+* The article lists a number of R packages that might be used for EDA: `arsenal`, `autoEDA`, `DataExplorer`, `dataMaid`,
+  `dlookr`, `ExPanDaR`, `explore`, `exploreR`, `funModeling`, `inspectdf`, `RtutoR`, `SmartEDA`, `summarytools`, `visdat`,
+  `xray`. 
+
+* These packages are used to automate or speed up type process of summarising data & discovering patterns
+  * Comparing their ranges of capabilities  
+
+## Q1. 
+
+What package had the highest number of CRAN downloads from the start of 2022?
+
+```{r}
+library(cranlogs) 
+
+# Extract daily package downloads from 2022-01-01
+eda_pkgs <-
+  cranlogs::cran_downloads(
+    packages = c("arsenal", "autoEDA", "DataExplorer", "dataMaid", "dlookr",
+                 "ExPanDaR", "explore", "exploreR", "funModeling", "inspectdf",
+                 "RtutoR", "SmartEDA", "summarytools", "visdat", "xray"), 
+    from = "2022-01-01", 
+    to = lubridate::today()
+    )
+
+# Compute total number of downloads
+eda_pkgs %>% 
+  group_by(package) %>% 
+  summarise(total = sum(count)) %>% 
+  arrange(desc(total))
+```
+
+* Interestingly, `visdat` was developed by Nick Tierney in the years he was at Monash.
+
+## Q2. 
+
+Open up the shiny server for checking download rates at https://hadley.shinyapps.io/cran-downloads/. What package has the highest download rate over the period Jan 1, 2022-today? 
+
+## Q3. 
+
+Install the package `visdat`. How many functions does Staniak and Biecek (2019) say `visdat` has for doing EDA? Explore what each of them does, by running the example code for each function. What do you think are the features that make `visdat` a really popular package? 
+
+* Six function that help visualise (refer to _page 13_ of week 1 readings)  
+  1. data frame showing variable types and missing data (`vis_dat`)
+  2. clusters of missing values (`vis_miss`),
+  3. differences between the two datasets (`vis_compare`),
+  4. types of each value in each column (`vis_guess`)
+  5. where given conditions are satisfied in the data (`vis_expect`),
+  6. correlation matrix for the numerical variables (`vis_cor`)
+* `visdata` is the only package that uses solely visual means of exploring the data.
+
+```{r}
+library(visdat)
+
+# Read-in data
+airquality <- datasets::airquality
+```
+
+```{r}
+# --- vis_miss
+airquality %>% vis_miss()
+
+# --- vis_dat
+airquality %>% vis_dat()
+```
+
+```{r}
+# --- vis_compare compares two datasets
+aq_diff <- airquality
+
+# Modify first ten rows of the first two columns 
+aq_diff[1:10, 1:2] <- NA
+
+vis_compare(airquality, aq_diff)
+```
+
+```{r}
+# --- vis_guess
+tibble(a = TRUE,
+       b = "char",
+       c = 0.1,
+       d = 5L,
+       e = "2022-01-01",
+       f = NA) %>% 
+  vis_guess()
+```
+
+```{r} 
+# --- vis_expect
+tibble(x = c(5, 10, 15)) %>% 
+  vis_expect(
+    ~ .x > 5 # Where x > 10
+    )
+```
+
+```{r}
+# --- vis_cor gives correlation matrix
+vis_cor(airquality)
+```
+
+## Q4. 
+
+The package `DataExplorer` has a high download rate and number of GitHub stars, and also a nice web site at https://boxuancui.github.io/DataExplorer/. The vignette "Introduction to DataExplorer" is a good place to start to learn what the package does. I want you to generate an automatic report to see what it creates, and what the package suggests is important. 
+
+Use the code below to create the data to use - it does the same thing as the code in the vignette but uses `dplyr` and piping better. Then run the report. It's not very pretty to read, but there's a vast amount of very useful information about the data that can help in preparing for its analysis.
+
+```{r}
+library(DataExplorer)
+library(nycflights13)
+
+# Create a big data set
+airlines_all <- flights %>% 
+  
+  # airline names
+  left_join(airlines,
+            by = "carrier") %>% 
+  
+  # plane metadata
+  left_join(planes,
+            by = "tailnum",
+            suffix = c("_flights", "_planes") # separate year of flight & year plane was manufactured
+            ) %>% 
+  
+  # origin airports
+  left_join(airports,
+            by = c("origin" = "faa"),
+            suffix = c("_carrier", "_origin") # separate name of carrier and origin airport
+            ) %>% 
+  
+  # destination airports
+  left_join(airports,
+            by = c("dest" = "faa"),
+            suffix = c("_origin", "_dest") # separate lat, lon, alt etc of origin and destination airports
+            ) 
+```
+
+```{r, eval=FALSE}
+# Run all EDA functions, produces report.html file
+DataExplorer::create_report(
+  airlines_all,
+  y = "arr_delay" # good to supply response variable for bivariate analysis
+  ) 
+```
+
+## Q5.
+
+*Table 2* summarises the activities of two early phases of the CRISP-DM standard.  
+
+```{r}
+knitr::include_graphics(here::here("tutorial-01/image/table-2.png"))
+```
+
+What does CRISP-DM mean?
+
+  * (from this week's readings) Cross Industry Standard Process for Data Mining (*CRISP-DM*) lists the following phases of a data mining project:
+    1. Business understanding 
+    2. Data understanding
+    3. Data preparation 
+    4. Modelling
+    5. Evaluation
+    6. Deployment
+
+The implication is that EDA is related to "data understanding" and "data preparation". Would you agree with this or disagree? Why?
+
+  * EDA is mostly guided by **intuition or expectations** of the data to uncover the interesting patterns in the data
+  * The automated R packages for EDA are mostly descriptive statistics, it doesn't digest what the data is really about 
+  * EDA techniques can be useful for some parts of these stages, for example finding outliers, or examining missing value patterns. 
+  * Some of these steps are important for effective EDA, too, for example, you need to know what types of variables you have in order to decide what types of plots to make. 
+
+## Q6. 
+
+*Table 1* of the paper summarising CRAN downloads and github activity is hard to read.
+
+* *Purpose*: Find out which R package is the most popular
+
+```{r}
+knitr::include_graphics(here::here("tutorial-01/image/table-1.png"))
+```
+
+How are the rows sorted? 
+
+  * Sorted by package name, in descending order
+
+What is the most important information communicated by the table? 
+
+  * Download rate because the purpose of the table is to know which are the commonly used or popular packages.
+
+In what way(s) might revising this table make it easier to read and digest the most important information? 
+
+  * Title is missing
+  * Sort rows by downloads 
+
