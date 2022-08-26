@@ -1,0 +1,736 @@
+---
+title: "ETC5521 Tutorial 5"
+subtitle: "Bivariate dependencies and relationships, transformations to linearise"
+author: "Dr Michael Lydeamore"
+date: "Week 5"
+output:
+  html_document:
+    toc: true
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE, 
+  message = FALSE, 
+  warning = FALSE, 
+  cache = TRUE,
+  cache.path = "tutorial05-cache/",
+  fig.path = "images/tutorial05/",
+  fig.align = "center"
+)
+```
+
+```{r libraries}
+library(tidyverse)
+library(broom)
+library(colorspace)
+library(ggExtra)
+library(patchwork)
+
+# Set default theme for ggplot2 objects
+ggplot2::theme_set(theme_bw())
+```
+
+# 🔨 Objectives
+
+These are exercises in making bivariate/pairwise scatter plots and variations to examine association between two variables, and to make practice using transformations.
+
+# 🚴 Preparation 
+
+Install the following R-packages if you do not have it already:
+
+```{r pkgs, eval = FALSE}
+install.packages(c("VGAMdata", "lawstat", "meta", "Sleuth2", "ggExtra", "gridExtra"))
+```
+
+# Exercise 1: Olympics
+
+We have seen from the lecture that the Athletics category has too many different types of athletics in it for it to be a useful group for studying height and weight. There is another variable called `Event` which contains more specific information.
+
+## a. 
+
+Tabulate `Event` for just the Sport category `Athletics`, and decide which new categories to create.
+
+```{r}
+# Read-in data
+data(oly12, package = "VGAMdata")
+```
+
+* World Athletics, the sport's governing body, defines athletics in six disciplines: track and field, road running, race walking, cross country running, mountain running, and trail running [wikipedia](https://en.wikipedia.org/wiki/Sport_of_athletics).
+  * This is not so helpful!
+
+## b.
+
+Create the new categories, in steps, creating a new binary variable for each. The function `str_detect` is useful for searching for text patterns in a string. It also helps to know about regular expressions to work with strings like this. And there are two sites, which are great for learning: [Regex puzzles](https://regexcrossword.com/challenges/beginner/puzzles/1), [Information and testing board](https://regex101.com)
+
+```{r}
+# Give each athlete an id as unique identifier to facilitate relational joins
+oly12 <- oly12 %>% 
+  mutate(id = row_number(), .before = Name)
+  
+# Athletes with multiple events are separated with a comma
+# This suggests that we can categorise athletes into > 1 category
+oly12 %>% 
+  filter(Sport == "Athletics") %>% 
+  select(id, Name, Event) %>% 
+  filter(str_detect(Event, ","))
+```
+
+```{r}
+# For athletes with > 1 event, separate each event into a row
+oly12_ath <- oly12 %>% 
+  filter(Sport == "Athletics") %>% 
+  separate_rows(Event, sep = ", ")
+
+# For example, Antoine Adams will now have 3 rows as he competes in 3 events
+oly12_ath %>% 
+  filter(id == 77) %>% 
+  select(id, Name, Event)
+```
+
+```{r}
+# All unique athletics events
+ath_events <- oly12_ath %>% 
+  distinct(Event) %>% 
+  arrange(Event)
+```
+
+* There are 47 unique running events in olympics 2012 
+
+* Decathlon (men): 10-event spread over two days
+  * day 1: 100m, long jump, shot put, high jump & 400m
+  * day 2: 110m hurdles, discus, pole vault, javelin and 1,500m
+* Heptathlon (women): 7-event spread over two days
+  * day 1: 100m hurdles, high jump, shot put and 200m
+  * day 2: long jump, javelin throw, 800m run
+
+```{r}
+ath_events %>% 
+  filter(
+    !str_detect(Event, "[1248]00m|Hurdles"),
+    !str_detect(Event, "1500m|5000m|Steeplechase"),
+    !str_detect(Event, ",000m|Marathon"),
+    !str_detect(Event, "Walk"),
+    !str_detect(Event, "Throw|Put"),
+    !str_detect(Event, "Jump|Pole Vault"),
+    !str_detect(Event, "Decathlon|Heptathlon")
+    )
+```
+
+```{r}
+# Determine athlete types into 7 categories
+oly12_ath <- oly12_ath %>% 
+  mutate(
+    Ath_type = case_when(
+      
+      # 100m, 110m Hurdles, 200m, 400m, 400m hurdles, 800m, 4 x 100m relay, 4 x 400m relay, 
+      str_detect(Event, "[1248]00m|Hurdles") ~ "Short distance",
+      
+      # 1500m, 3000m Steeplechase, 5000m
+      str_detect(Event, "1500m|5000m|Steeplechase") ~ "Middle distance",
+      
+      # 10,000m, Marathon
+      str_detect(Event, ",000m|Marathon") ~ "Long distance",
+      
+      # 20km Race walk, Men's 50km Race walk
+      str_detect(Event, "Walk") ~ "Walking",
+      
+      # discus throw, hammer throw, javelin throw, shot put, 
+      str_detect(Event, "Throw|Put") ~ "Throwing",
+      
+      # high jump, long jump, triple jump, pole vault
+      str_detect(Event, "Jump|Pole Vault") ~ "Jumping",
+      
+      # decathlon (men) or heptathlon (women)
+      str_detect(Event, "Decathlon|Heptathlon") ~ "Decathlon/Heptathlon")
+    ) 
+```
+
+* `[]`: character set - matches any one character in the character set
+
+* We can categorise them into     
+  (1) Short distance athlete
+  (2) Middle distance athlete
+  (3) Long distance athlete
+  (4) Walking athlete
+  (5) Throwing athlete
+  (6) Jumping athlete
+  (7) Decathlon (men) or Heptathlon (women)
+
+```{r}
+# Some athletes have > 1 rows with the same athlete type
+# e.g. runner competing in 5,000m and 10,000m will be "Middle Distance" in both rows
+oly12_ath %>% 
+  group_by(id) %>% 
+  filter(n() > 1) %>% 
+  select(id, Event, Ath_type) 
+
+# Remove rows with > 1 of the same athlete type
+oly12_ath <- oly12_ath %>% 
+  select(-Event) %>% 
+  distinct() 
+```
+
+```{r}
+# Add events back to each athlete
+oly12_ath <- oly12_ath %>%
+  left_join(
+    select(.data = oly12, c(Event, id)), 
+    by = "id")
+
+# Note that some of athletes have more than 1 athlete type
+# e.g. Short distance & a jumping athlete
+oly12_ath %>% 
+  group_by(id) %>% 
+  filter(n() > 1) %>% 
+  select(id, Ath_type, Event)
+```
+
+## c.
+
+Make a plot that explores the association between height and weight for the different athletic categories.
+
+```{r}
+ggplot(data = oly12_ath, aes(x = Height, y = Weight)) +
+  geom_point(alpha = 0.4) +
+  facet_grid(Sex ~ Ath_type)
+```
+
+```{r}
+ggplot(oly12_ath, aes(x = Height, y = Weight, colour = Ath_type)) +
+  geom_smooth(method = "lm", se = F) +
+  scale_colour_discrete_qualitative() +
+  facet_wrap(~ Sex) 
+```
+
+
+## d.
+
+Write a paragraph explaining what is learned about body types across the different athletics types. 
+
+* From the scatter plots we learn that
+  * there are some heavy runners, especially in the shorter distances
+  * the throwers are generally taller and much heavier. 
+  * female walkers tend to be pretty small. 
+  * long distance runners are light!
+  
+* Decathlon/Heptathlon athletes are usually quite heavy; which makes sense as they have to be all-rounded
+  * if they're too light, they may not do well in throwing events
+  * if they're too heavy, they may not do well in running or jump events 
+
+* The comparisons between groups is easier from the models. 
+  * throwers are heavy! 
+  * long/middle distance runners and walkers are relatively light.
+
+# Exercise 2: Fisherman's Reach crabs
+
+Mud crabs are delicious to eat! Prof Cook's father started a crab farm at Fisherman's Reach, NSW, when he retired. He caught small crabs (with a special license) and nurtured and fed the crabs until they were marketable size. They were then sent to market, like Queen Victoria Market in Melbourne, for people to buy to eat. Mud crabs have a strong and nutty flavour, and a good to eat simply after steaming or boiling.
+
+Early in the farming set-up, he collected the measurements of 62 crabs of different sizes, because he wanted to learn when was the best time to send the crab to market. Crabs re-shell from time to time. They grow too big for their shell, and need to discard it. Ideally, the crabs should be sent to market just before they re-shell, because the will be crab will be fuller in the shell, less air, less juice and more crab meat.  
+
+```{r}
+fr_crabs <- read_csv("https://eda.numbat.space/data/fr-crab.csv") %>%
+  mutate(Sex = factor(Sex))
+```
+
+## a. 
+
+Where is Fisherman's Reach? What would you expect the relationship between Length and Weight of a crab to be?
+
+* North coast of NSW, north-east of Kempsey, on the back-water of the Macleay River. 
+  * it has a recorded population of 157 residents, see [this website](https://www.australias.guide/nsw/location/fishermans-reach/)
+
+* We would expect relationship between length & weight to be positive, and maybe non-linear
+
+## b. 
+
+Make a scatterplot of Weight by NSW Length. Describe the relationship. It might be even better if you can add marginal density plots to the sides of the scatterplot. (Aside: Should one variable be considered a dependent variable? If so, make sure this is on the $y$ axis.)
+
+```{r}
+p <- ggplot(data = fr_crabs) +
+  geom_point(aes(x = Length.NSW, y = Wgt)) 
+
+# Add marginal density plots to assess skewness in each variable
+ggExtra::ggMarginal(p, type = "density")
+```
+
+* It is a little non-linear, positive and strong relationship. Weight should be considered dependent.
+
+```{r}
+# Fit linear model
+cr_lm <- lm(Wgt ~ Length.NSW, data = fr_crabs)
+
+# Extract residuals and fitted values
+fr_crabs <- broom::augment(cr_lm, fr_crabs)
+
+# Plot linear model
+p1 <- ggplot(fr_crabs, aes(x = Length.NSW, y = Wgt)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = FALSE)
+
+# Residual vs. fitted
+p2 <- ggplot(fr_crabs, aes(x = .fitted, y = .resid)) +
+  geom_point()
+
+p1 + p2
+```
+
+* If you are unsure about a non-linear relationship, fit a linear model and look at the residuals. 
+  * In the plots below you can see the residuals have a U-shape, and also have major **heteroskedasticity**.
+
+## c. 
+
+Examine transformations to linearise the relationship. (Think about why the relationship between Length and Weight is nonlinear.)
+
+```{r}
+# Square root transformation
+p1 <- ggplot(fr_crabs, aes(x = Length.NSW, y = Wgt)) +
+  geom_point() +
+  scale_y_sqrt() +
+  labs(title = "Square root")
+
+# Log10 transformation
+p2 <- 
+  ggplot(fr_crabs, aes(x = Length.NSW, y = Wgt)) +
+  geom_point() +
+  scale_y_log10() +
+  labs(title = "Log10")
+
+p1 + p2
+
+# Linear model looks better!
+ggplot(fr_crabs, aes(x = Length.NSW, y = log(Wgt))) +
+  geom_point() +
+  geom_smooth(method = "lm", se = FALSE) +
+  labs(title = "Log10")
+```
+
+* Taking a log transformation on the response variable appears to fix the heteroskedasticity
+
+## d.
+
+Is there a lurking variable? Examine the variables in the data, and use colour in the plot to check for another variable explaining some of the relationship.
+
+* Lurking variable is a variable that is not include in the analysis, but can impact the relationship or the interpretation being analysed
+
+```{r}
+# Original scale
+p1 <- ggplot(fr_crabs, aes(x = Length.NSW, y = Wgt, colour = Sex)) +
+  geom_point() +
+  scale_colour_brewer(palette = "Dark2") +
+  theme(legend.position = "bottom")
+
+# Log scale
+p2 <- p1 + scale_y_log10() 
+
+p1 + p2
+```
+
+* `Sex` of the crab makes a difference in `the relationship; in this case, `2` relates to the male mud crabs
+  * Males generally growing larger than females, see [here](https://www.mudcrabsdirect.com.au/Faqs/Faqs-15/)
+  
+## e.
+
+If you have determined that the is a lurking variable, make changes in the plots to explore the relationship between Weight and Length accordingly.
+
+```{r}
+ggplot(data = fr_crabs) +
+  geom_point(aes(x = Length.NSW, y = log(Wgt))) +
+  facet_wrap(~ Sex)
+```
+
+* Male shows a more non-linear relationship
+
+## f.
+
+How would you select the crabs that were close to re-shelling based on this data?
+
+```{r}
+ggplot(data = fr_crabs,
+       aes(x = Length.NSW, y = log(Wgt), colour = Sex)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = FALSE) +
+  scale_colour_discrete_qualitative() +
+  facet_wrap(~ Sex)
+```
+
+
+* Crabs grow too big for their shell, and need to discard it; Ideally, the crabs should be sent to market just before they re-shell.
+  * therefore, we can select the crabs that are heavier for their length.
+* In looking at the linear model fit, we can potentially look to re-shell crabs that are above the fitted line
+
+# Exercise 3: Thrombolytic therapy
+
+The results of 70 studies on thrombolytic therapy after acute myocardial infarction are reported in the *Olkin95* data in the **meta** package. 
+```{r}
+data(Olkin95, package = "meta")
+```
+
+* One row relates to a single study
+  * `event.e`: no. of events in experimental group
+  * `event.c`: no. of events in control group
+  * `n.e`: no. of observations in experimental group
+  * `n.c`: no. of observations in control group
+
+## a. 
+
+What is acute myocardial infarction?
+
+* Heart attack
+  * occurs when heart muscle don't get enough oxygen due to blockage such as blood clot blocking arteries to the heart muscle
+* Thrombolytic therapy looks to dissolve major blood clots that blocked major arteries to restore blood flow
+
+## b.
+
+What is a meta-analysis?
+
+* Results from multiple studies are combined to incorporate the entire body of experiments/studies to address problems in the hope that it provides stronger conclusions or more precise answers. 
+  * typically applied to medical studies.
+* In our dataset, we have 70 studies combined
+
+## c.
+
+Draw a scatterplot of the number of observations in the experimental group against that number in the control group. What do you notice?
+
+```{r}
+Olkin95 %>% 
+  ggplot(aes(x = n.e, y = n.c)) + 
+  geom_point(size = 0.8) +
+  # 45° line
+  geom_abline(slope = 1, colour = "red", alpha = 0.2)
+```
+
+* Two variables lie on the 45° line, suggesting that there are there are similar number of observations in each group
+
+## d.
+
+What fraction of the studies have less than 100 patients in the experimental group?
+
+```{r}
+Olkin95 %>% 
+  mutate(n.e.100 = if_else(n.e < 100, "less", "more")) %>% 
+  count(n.e.100)
+```
+
+45 / 70 (64%) of the studies has less than 100 patients in the experimental group.
+
+## e.
+
+Re-make the scatterplot, just on the studies with the fewer patients. What do you notice?
+
+```{r}
+Olkin95 %>% 
+  filter(n.e < 100) %>% 
+  ggplot(aes(x = n.e, y = n.c)) +
+  geom_point()
+```
+
+The two variables are strongly positively related. There are 2, perhaps 3, outliers, that have very small numbers in the control group relative to the number in the experimental group.
+
+```{r}
+# Number of events against number of observations in a given study
+Olkin95 %>% 
+  pivot_longer(cols = c(event.e, event.c),
+               names_pattern = "event.([ec])",
+               names_to = "group",
+               values_to = "event") %>% 
+  mutate(n = if_else(group == "e", n.e, n.c)) %>% 
+  select(-n.e, -n.c) %>% 
+  ggplot(aes(x = n, y = event, colour = group)) +
+  geom_smooth(method = "lm", se = FALSE) +
+  # Number of events to number of group
+  geom_point(alpha = 0.5) +
+  scale_colour_discrete_qualitative() +
+  # Zoom into plot
+  coord_cartesian(xlim = c(0, 300),
+                  ylim = c(0, 80))
+```
+
+* For a given study, it appears that the control group had more frequent events as compared to the experimental group.
+
+# Exercise 4: Zuni educational funding
+
+```{r}
+data(zuni, package = "lawstat")
+```
+
+(From tutorial 4) The `zuni` dataset in the `lawstat` package contains information on 89 school districts in New Mexico, U.S.A., for three variables: the district name, the average revenue per student in dollars, and the number of students. This data is from a court case that raised concern whether the expenditures per student was approximately equal in the state. 
+
+## a. 
+
+Make a scatterplot of average revenue per student against the corresponding number of students. What do you learn?
+
+```{r}
+p1 <- ggplot(data = zuni) +
+  geom_point(aes(x = Mem, y = Revenue))
+
+ggMarginal(p1)
+```
+
+
+## b. 
+
+What sort of transformation would be useful to re-make this plot? Are there still outliers? What would you do to look at the relationship without them, if so?
+
+```{r}
+p2 <- ggplot(data = zuni) +
+  geom_point(aes(x = Mem, 
+                 y = log(Revenue))
+             ) +
+  scale_x_log10()
+
+ggMarginal(p1) # No transformation
+ggMarginal(p2) # Log transformation
+```
+
+* Taking log on the x-axis fixes the right skewness in the `Mem` variable. 
+* On the y-axis (`Revenue`), most of the observations lie between ~ 2,500 - 3,700, with four big outliers
+  * Taking a log transformation did not help, as log transformation is a monotonic transformation (*i.e.* leaving them in the same order)
+  * We could potentially remove these observations, or set limits in order to better assess the relationship of the rest of the observations
+
+## c. 
+
+There might be more that is needed to be done, to examine the relationship between revenue and reports. Describe the relationship now.
+
+```{r}
+ggplot(zuni, aes(x=Mem, y=Revenue)) + 
+  geom_point() +
+  scale_x_log10() +
+  ylim(c(2500, 4000))
+```
+
+* Its a weak relationship. It almost looks like there is a positive relationship up to about 3000, but this is probably imagining too much. 
+* There are some high revenue amounts for small numbers of students. 
+* There are low revenue amounts for higher number of students.
+* It looks like there is a barrier, which forms the relationship of as number of students increase, revenue is roughly capped.*
+
+# Exercise 5: Bank discrimination
+
+## a. 
+
+Look at the help page for the `case1202` from the `Sleuth2` package. What does the variable "Senior" measure? "Exper"? Age?
+
+```{r}
+data(case1202, package = "Sleuth2")
+```
+
+* `Senior`: seniority of the employee in the company.
+* `Experience`: months of prior experience coming into the company.
+* `Age`: given in months
+
+## b.
+
+Make all the pairwise scatter plots of `Senior`, `Exper` and `Age.` What do you learn about the relationship between these three pairs of variables? How can the age be 600? Are there some wizards or witches or vampires in the data?
+
+```{r}
+# Scatter plot matrix
+GGally::ggpairs(data = case1202,
+                c("Senior", "Exper", "Age"))
+```
+
+* Experience and age is positively related, fairly moderate to strong relationship. 
+* There are more younger less experienced employees. There is no relationship between seniority and age, or experience.
+
+## c. 
+
+Colour the observations by Sex. What do you learn?
+
+```{r}
+GGally::ggpairs(data = case1202,
+                mapping = aes(colour = Sex),
+                c("Senior", "Exper", "Age")) +
+  scale_colour_discrete_qualitative() +
+  scale_fill_discrete_qualitative()
+```
+
+* This is really interesting! 
+* The older men almost always come to the company with less experience than the women.
+* Beyond this, though, there is not much that can be said about the relationship between the three variables in the other plots.
+* Maybe small effect, that at older age and low seniority, there are only female employees.s
+
+## d.
+
+Make faceted histograms of the three variables. What do you learn about the difference in distribution of these three variables between the sexes.
+
+```{r}
+# Senior
+p1 <- ggplot(case1202, aes(x = Senior)) +
+  geom_histogram(binwidth = 5, colour = "white") +
+  facet_wrap(~ Sex, ncol = 1)
+
+# Age
+p2 <- ggplot(case1202, aes(x = Age)) +
+  geom_histogram(binwidth = 50, colour = "white") +
+  facet_wrap(~ Sex, ncol = 1)
+
+# Experience
+p3 <- ggplot(case1202, aes(x = Exper)) +
+  geom_histogram(binwidth = 50, colour = "white") +
+  facet_wrap(~ Sex, ncol = 1)
+
+p1 + p2 + p3 
+```
+
+* This is interesting again! 
+* The distribution of seniority for women is quite uniform, bur for men has a mode around 85-90. 
+* For age, there is a bimodal pattern for women, young and older - I wonder if there is a child-bearing years drop out among women. With men, there is a large spike, of young men, and few older men. 
+* The experience that employees come into the company with has a different distribution for men and women: for men it tends to be less experience, and for women this is true too, although the mode is at more experience than for the men. 
+  * This suggests that men are being hired into the company with less experience than the women.
+
+## e.
+
+The data also has starting salary and annual salary. Plot these two variables, faceted by Sex, and explain the relationships. 
+
+```{r}
+ggplot(case1202, aes(x = Sal77, y = Bsal)) +
+  geom_point() + 
+  facet_wrap(~ Sex) +
+  theme(aspect.ratio = 1)
+```
+
+* This is where it gets a bit depressing: the women generally have lower salaries than men, both starting salary and annual salary.
+
+## f.
+
+Examine this against the two different salaries against `Senior` and `Exper`, separately by Sex. What is the relationship?
+
+```{r}
+# Salary against seniority
+p1 <- ggplot(case1202, aes(x = Senior, y = Sal77, colour = Sex)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = F) +
+  scale_colour_brewer("", palette = "Dark2") +
+  theme(legend.position = "bottom")
+
+# Salary against experience
+p2 <- ggplot(case1202, aes(x = Exper, y = Sal77, colour = Sex)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = F) +
+  scale_colour_brewer("", palette = "Dark2") +
+  theme(legend.position = "bottom")
+
+# Basic salary against seniority
+p3 <- ggplot(case1202, aes(x = Senior, y = Bsal, colour = Sex)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = F) +
+  scale_colour_brewer("", palette = "Dark2") +
+  theme(legend.position = "bottom")
+
+# Basic salary against experience
+p4 <- ggplot(case1202, aes(x = Exper, y = Bsal, colour = Sex)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = F) +
+  scale_colour_brewer("", palette = "Dark2") +
+  theme(legend.position = "bottom")
+
+p1 + p2 + p3 + p4 +
+  plot_layout(ncol = 2)
+```
+
+
+## g.
+
+Would you say that this data provides evidence of sex discrimination?
+
+* Yes, all the supporting evidence is in the plots from the previous parts.
+
+# Exercise 6: Baker field corn yield
+ 
+This is the corn yield and soil characteristics of the Iowa field (discussed in lecture). 
+
+```{r, include=FALSE}
+corn <- read_csv("https://eda.numbat.space/data/baker.csv")
+```
+
+* Soil chemical analysis of a farm field in Iowa
+
+## a.
+
+Construct a histogram of yield, with an appropriate choice in bin width. Describe the shape. 
+
+```{r}
+ggplot(data = corn) +
+  geom_histogram(aes(x = Corn97BU),
+                 binwidth = 10, colour = "white")
+```
+
+* It's is unimodal and bell-shaped, with perhaps a little left-skew.
+
+
+## b.
+
+The variables X and Y provide the grid locations of the area being sampled. Make a bubble chart of the corn yield for the spatial locations of the measurements. Are there some areas of the field that have really low yield?
+
+```{r}
+# Bubble plot
+ggplot(corn, aes(x=X, y=Y, size=Corn97BU)) + 
+  geom_point() + 
+  theme_void() + 
+  theme(aspect.ratio = 1)
+```
+
+* The top portion of the corn field appears to have relatively low yield.
+
+## c.
+
+Turn this into a tile map of the field instead. Is it easier to see the low yield locations in the field?
+
+```{r}
+# Heat map
+ggplot(data = corn) +
+  geom_tile(aes(x = X, y = Y, fill = Corn97BU), colour = "black") +
+  theme_void() +
+  colorspace::scale_fill_continuous_sequential(palette = "Terrain 2")
+```
+
+
+## d.
+
+(d) Compute the correlation between corn yield and all of the soil chemistry variables. Make a scatterplot of yield against the chemical that is most correlated with yield. Describe the relationship. 
+(e) If need be, make a transformation to linearise the relationship. 
+
+```{r}
+# Compute correlation betewen corn yield & soil chemistry variables
+round(cor(corn$Corn97BU, corn[4:13]), 2)
+```
+
+* Stronger relationship is between copper (`Cu`) and yield
+
+```{r}
+# Original values
+p1 <- ggplot(data = corn) +
+  geom_point(aes(x = Cu, y = Corn97BU))
+
+# Log transformation
+p2 <- p1 + scale_x_log10()
+
+p1 + p2
+```
+
+* The r/s is positive & moderately strong, and non-linear
+* Considering the **circle of transformation**, it is in the -,+ side of the number plane, which means we can consider transformation $x$ using powers below 1, or $y$ with powers above 1.
+  * After trying various transformations, a log of copper seemed to produce the most linear relationship.
+
+## f.
+
+Make the field map for this chemical, alongside the field map (like you did in part c). Are the low values for the chemical in the same spatial locations as the low values for yield?  
+
+```{r}
+ggplot(corn,
+       aes(
+         x = X,
+         y = Y,
+         fill = Corn97BU,
+         colour = if_else(Cu < 1, "low", "high")
+       )) +
+  geom_tile(size = 0.7) +
+  scale_colour_manual(name = "", values = c("cornsilk", "coral4")) +
+  scale_fill_continuous_sequential(palette = "Terrain 2") +
+  theme_void() +
+  theme(legend.position = "bottom")
+```
+
+* I think its easier to see if we "hack" the plot and make the edges of the tile correspond to low copper values. 
+* Then it can be seen that these are mostly in the same locations as the low yield. This would be expected, but there is some variability in the relationship between copper and yield, so its interesting to see the spatial distribution of the low copper, especially relative to the yield.
+
+
