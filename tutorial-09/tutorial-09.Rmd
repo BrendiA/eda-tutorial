@@ -1,0 +1,577 @@
+---
+title: "ETC5521 Tutorial 9"
+subtitle: "Exploring spatiotemporal data"
+author: "Dr Di Cook"
+date: "Week 9"
+output:
+  bookdown::html_document2:
+    toc: true
+    number_sections: false
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(
+  echo = FALSE, 
+  message = FALSE, 
+  warning = FALSE, 
+  cache = TRUE,
+  eval = FALSE,
+  cache.path = "cache/",
+  fig.path = "images/tutorial9/",
+  fig.align = "center"
+)
+```
+
+```{r libraries, include=FALSE}
+library(tidyverse)
+library(lubridate)
+library(tsibble)
+library(GGally)
+library(patchwork)
+library(forcats)
+library(ozmaps)
+library(sf)
+library(maptools)
+library(cartogram)
+library(ggthemes)
+library(viridis)
+library(readxl)
+library(sugarbag)
+library(cubble) # remotes::install_github("huizezhang-sherry/cubble")
+library(strayr)
+```
+
+# Objectives
+
+This tutorial practices rearranging spatial-temporal data to focus on spatial or temporal patterns, and constructing choropleth maps and cartograms.
+
+# Exercise 1: Gridded spatiotemporal data
+
+Conduct a spatial-temporal analysis of ozone measurements over central America, following the analysis of temperature provided in the class lecture notes.
+
+## a. Make a single map
+
+Load the `nasa` data from the `GGally` package, and make a map of ozone for January 2015, overlaid on a map of the geographic area. What do you learn about the spatial distribution of ozone?
+
+```{r}
+# Read-in data
+data(nasa, package = "GGally") 
+  
+# South America bounding box
+sth_america <- map_data("world") %>%
+  filter(between(long, -115, -53),
+         between(lat, -20.5, 41))
+```
+
+```{r}
+# Ozone measurements 
+ggplot() + 
+  # Spatial grid, fill by ozone
+  geom_tile(data = filter(nasa, time == 1),
+            aes(x = long, y = lat, fill = ozone)) +
+  # South America features
+  geom_path(data = sth_america,
+            aes(x = long, y = lat, group = group),
+            colour = "white", size = 1) +
+  # Equator
+  geom_linerange(data = filter(nasa, time == 1),
+                 aes(xmin = min(long), xmax = max(long), y = 0),
+                 colour = "grey90", linetype = "dashed") +
+  scale_fill_viridis_c(name = "ozone", option = "magma") +
+  labs(title = "January 1995") +
+  ggthemes::theme_map() +
+  theme(legend.position = "bottom")
+```
+
+**Context**
+* Ozone layer shields us from harmful solar radiation by absorbing UV light that could cause skin damage or cancer 
+  * usually affected by temperature, humidity and wind speed
+* `ozone` is measured in Dobson units (DU), measures thickness of pure gas
+  * 300 DU forms 3mm layer of pure gas
+
+**Findings**
+* The high concentrations of ozone are at the highest latitude. 
+* The lowest are close to the equator, & there is a small increase in values in the southern hemisphere. 
+  * In general, countries near the equator are usually
+* The trend is primarily north-south, and doesn't change between land and sea.
+
+## b. Display the map over time
+
+Generate the maps of ozone for all of the time period, by faceting on month and year. Why was the plot organised so that months were in columns and years in rows, do you think? What do you learn about the temporal changes in the spatial distribution of ozone?
+
+```{r}
+# Include month label
+nasa <- nasa %>% 
+  mutate(month_label = month(date, label = TRUE),
+         .after = date)
+
+# Plot ozone, facet by month & year
+ggplot() + 
+  # Spatial grid, fill by ozone
+  geom_tile(data = nasa, aes(x = long, y = lat, fill = ozone)) +
+  # Equator
+  geom_linerange(data = nasa,
+                 aes(xmin = min(long), xmax = max(long), y = 0),
+                 colour = "grey90", linetype = "dashed") +
+  facet_grid(year ~ month_label) +
+  scale_fill_viridis_c(name = "ozone",
+                       option = "magma") +
+  theme_map() +
+  theme(legend.position = "bottom")
+```
+
+* The primary comparison is same month each year, which we might expect to be fairly similar.
+  * reading down columns is easier for making comparison across the years. Reading across the row, allows comparison of seasonal patterns within a year.
+
+* There is a **small seasonal pattern**, in that there is a decrease in values in the northern hemisphere in the late northern hemisphere summer (July, Aug, Sep). 
+  * there is an small increase during these months around the equator also. 
+
+* Because the latitude does not go as far south as north, we cannot see whether the ozone values are similarly high in the south as in the north, for corresponding distance from the equator. 
+
+* The pattern remains that it is mostly **north-south trend** (position of sun during the year) rather than east-west trend (earth-rotation) trend.
+
+* There is not a lot of difference across years: perhaps slightly increased values extending further towards the equator from the northern latitudes in the summer months.
+
+## c. Glyphmap
+
+Make two glyphmaps of ozone, one with time series at each spatial grid point, scaled globally, and the other using polar coordinates at each spatial grid point, scaled individually. What do you learn about the temporal trend, and seasonal patterns of ozone over this geographic region?
+
+```{r time_space, fig.width=6, fig.height=6, out.width="80%"}
+p1 <- nasa %>% 
+  
+  ggplot(aes(x_major = long, x_minor = day, 
+             y_major = lat, y_minor = ozone)) +
+  
+  # South America map
+  geom_polygon(data = sth_america, 
+               aes(x = long, y = lat, group = group),
+               inherit.aes = FALSE,
+               fill = "#014221", alpha = 0.5, colour = "#ffffff") +
+  
+  # Box for each spatial grid
+  cubble::geom_glyph_box(alpha = 0.3) +
+
+  # Reference line
+  cubble::geom_glyph_line() +
+
+  theme_map()
+```
+
+* Glyph maps are small time series plotted at each spatial location.
+  * explore temporal trends over space
+  
+* `geom_glyph()` arguments
+  * `x_major` & `y_major`: geographic coordinates (lat and long)
+  * `x_minor` & `y_minor`: Variables for time series plot
+
+```{r}
+# Time series in glyph boxes
+p1 + 
+  cubble::geom_glyph() +
+  theme(plot.background = element_rect(fill = "grey80"))
+
+# Time series represented in in polar coordinates in glyph boxes
+p1 + 
+  cubble::geom_glyph(polar = TRUE) +
+  theme(plot.background = element_rect(fill = "grey80"))
+
+nasa %>% 
+  filter(id == "2-1") %>% 
+  ggplot() +
+  geom_line(aes(x = day, y = ozone))
+```
+
+# Exercise 2: Melbourne Covid-19 outbreak 
+
+In Melbourne we were in a strict lockdown for much of 2020, and large chunks of 2021. Each week we got our hopes up that restrictions might be eased, and once again these hopes were dashed by announcements each week, keeping the restrictions a little longer. The data we have collected here are the **case counts by Victorian local government area (LGA)** since the beginning of July, 2020. We will examine the spatial-temporal distribution of these counts. 
+
+Working with spatial data is always painful! It almost always requires some **ugly** code. 
+
+* Part of the reason for the difficulty is the use of special data objects, that describe maps. There are several different choices, and some packages and tools use one, and others use another, so not all tools work together. The **`sf` package** helps enormously, but some tools still use other forms, and when you run into errors this might be the reason - it can be hard to tell. 
+
+* Another reason is that map objects can be very large, which makes sense for accurate mapping, but for data analysis and visualisation, we'd rather have smaller, even if slightly inaccurate, spatial objects. It can be helpful to **thin out map data** before doing further analysis - you need special tools for this, eg `mapshapr`. We don't need this for the exercises here, because the `ozmaps` version of the LGAs is already thinned. 
+
+* Another problem commonly encountered is that there are **numerous coordinate systems and types of projections** of the 3D globe into a 2D canvas. We have become accustomed to lat/long but like time its an awkward scale to compute on because a translation from E/W and N/S to positive and negative values is needed. More commonly a Universal Transverse Mercator (UTM) is the standard but its far less intuitive to use.  
+
+* And yet another reason is that keys **linking data tables and spatial tables** may not match perfectly because there are often synonyms or slightly different name preferences between different data collectors.
+
+The code for all the analysis is provided for you. We recommend that you run the code in steps to see what it is doing, why the mutating and text manipulations are necessary. Talk about the code with each other to help you understand it. 
+
+## a. Read case counts for 2020
+
+The file `melb_lga_covid.csv` contains the cases by LGA. Read the data in and inspect result. You should find that some variables are type `chr` because "null" has been used to code entries on some days. This needs fixing, and also missings should be converted to 0. Why does it make sense to substitute missings with 0, here?
+
+```{r}
+covid <-
+  # Read the data
+  read_csv("https://raw.githubusercontent.com/numbats/eda/master/data/melb_lga_covid.csv") %>%
+  
+  
+  # Replace null with 0, for three LGAs
+  mutate(across(.cols = c(Buloke, Hindmarsh, Towong), ~ as.numeric(if_else(.x == "null", "0", .x)))) %>% 
+  
+  # Convert to long format to facilitate join
+  pivot_longer(cols = Alpine:Yarriambiack,
+               names_to = "NAME",
+               values_to = "cases") %>%
+  
+  # Convert to character to date format
+  mutate(Date = ydm(paste0("2020/", Date))) %>%
+  
+  # Set NA to 0, this is a reasonable assumption
+  mutate(cases = replace_na(cases, 0))
+```
+
+* NAs really have to be 0s. Its likely that the cells were left blank when numbers were recorded, left blank because there were no cases that day.
+
+## b. Check the data
+
+Check the case counts to learn whether they are daily or cumulative. The best way to do this is select one suburb where there were substantial cases, and make a time series. If the counts are cumulative, calculate the daily counts, and re-check the temporal trend for your chosen LGA. Describe the temporal trend, and any visible artefacts. 
+
+```{r}
+# --- Checking Covid-19 cases for Brimbank LGA
+
+# Case counts are cumulative, so take lags to get daily case counts
+covid <- covid %>%
+  group_by(NAME) %>%
+  mutate(new_cases = cases - dplyr::lag(cases)) %>%
+  na.omit()
+
+# Check the case counts
+covid %>%
+  filter(NAME == "Brimbank") %>%
+  ggplot(aes(x = Date, y = cases)) +
+  geom_line()
+  
+# Check the case counts
+covid %>% 
+  filter(NAME == "Brimbank") %>%
+  ggplot(aes(x = Date, y = new_cases)) +
+  geom_col() 
+```
+
+* This is cumulative data. Once re-calculated as daily counts, and artefact that emerges is that there are a few **small negatives**. 
+  * this could occur if the previous days numbers have been adjusted as new information on cases or duplicates were found.
+
+## c. Spatial polygons
+
+Now let's get polygon data of Victorian LGAs using the `strayr` package. We need to fix some names of LGAs because there are duplicated LGA names, and there is one mismatch in names from the COVID data and the ozmaps data (Colac Otway). If the COVID data had been provided with a unique LGA code it would have helped in merging with the polygon data.
+
+```{r}
+# Rename variables
+covid <- covid %>%
+  select(-cases) %>%
+  rename(lga = NAME,
+         date = Date, 
+         cases = new_cases) 
+
+# Extend tidy data to tsibble object
+covid_ts <- as_tsibble(covid, 
+                       key = lga, 
+                       index = date)
+
+covid_ts %>% 
+  filter(str_detect(lga, "Colac"))
+```
+
+```{r}
+# Read LGA data, containing polygons of LGAs for Australia
+lga <- strayr::read_absmap("lga2018") 
+
+# Victoria LGA 
+lga <- lga %>% 
+  rename(lga = lga_name_2018) %>% 
+  filter(state_name_2016 == "Victoria") 
+
+# Remove brackets at the end of lga variable to match covid_ts data
+lga <- lga %>% 
+  mutate(lga = str_remove(lga, "\\s\\(.+\\)")) 
+
+# There is still one LGA that is not matched
+setdiff(unique(lga$lga), unique(covid_ts$lga))
+```
+
+* `\\s\\(.+\\)`
+  * `\\s`: any white space (*e.g.* space, tab, new line)
+  * `.`: wildcard, matches any character except a new line
+  * `+`: 1 or more instances of `.`
+
+
+```{r}
+# Fix one LGA
+lga <- lga %>% 
+  mutate(lga = if_else(lga == "Colac-Otway", "Colac Otway", lga)) %>% 
+  # Remove non LGAs
+  filter(!(lga %in% setdiff(unique(.$lga), unique(covid_ts$lga))))
+
+# All the LGAs are now matched
+setdiff(unique(lga$lga), unique(covid_ts$lga))
+
+# Convert to cubble object
+covid_cb <- 
+  as_cubble(data = list(spatial = lga, temporal = covid_ts),
+            key = lga, 
+            index = date, 
+            coords = c(cent_long, cent_lat)) # coordinates of spatial dimension
+```
+
+**Definition of cubble**
+* See [link](https://huizezhang-sherry.github.io/cubble/articles/glyph.html)
+* `cubble` stands for “cubical tibble” — *i.e.* a cube with three axes: variable, location (spatial) and time (temporal)
+    * provides a new structure to manipulate spatio-temporal data
+    
+**Structure of cubble**
+* cubble in a nested form
+  * Shows each LGA as an observation
+  * Time invariant variables as columns
+  * Time varying variables are nested in the `ts` column
+
+## d. Choropleth map
+
+Select one day, merge the COVID data with the map polygons (LGA) and create a choropleth map. The LGA data is an `sf` object so the `geom_sf` will automatically grab the geometry from the object to make the spatial polygons.
+
+```{r}
+# Compute total cases over time period
+covid_cb_tot <- covid_cb %>%
+  mutate(cases = sum(ts$cases, na.rm = TRUE),
+         .before = ts) 
+
+# Choropleth map
+ggplot(covid_cb_tot) + 
+  geom_sf(aes(fill = cases, 
+              label = lga), # for ggplotly
+          colour = "white") + 
+  scale_fill_distiller(name = "Cases",
+                       palette = "YlOrRd", 
+                       direction = 1) + 
+  theme_map() +
+  theme(legend.position = "bottom")
+
+plotly::ggplotly()
+```
+
+## e. Cartogram
+
+To make a population-transformed polygon we need to get population data for each LGA. The file [`VIF2019_Population_Service_Ages_LGA_2036.xlsx`](https://github.com/numbats/eda/blob/master/data/VIF2019_Population_Service_Ages_LGA_2036.xlsx)  has been extracted from the [Vic Gov web site](https://www.planning.vic.gov.au/land-use-and-population-research/victoria-in-future/tab-pages/victoria-in-future-data-tables). It is a complicated `xlsx` file, with the data in sheet 3, and starting 13 rows down. The `readxl` package is handy here to extract the population data needed. You'll need to join the population counts to the map data to make a cartogram. Once you have the transformed polygon data, the same plotting code can be used, as created the choropleth map. 
+
+```{r}
+# Population from https://www.planning.vic.gov.au/land-use-and-population-research/victoria-in-future/tab-pages/victoria-in-future-data-tables
+# Data can be downloaded from https://github.com/numbats/eda/blob/master/data/VIF2019_Population_Service_Ages_LGA_2036.xlsx
+
+# Read-in population data
+pop <- read_xlsx(here::here("data/VIF2019_Population_Service_Ages_LGA_2036.xlsx"),
+                 sheet = "Age Sex",
+                 skip = 11) 
+
+# Extract population for each LGA
+pop <- pop %>% 
+  # LGA and total population
+  select(LGA, `Persons\r\nTotal...22`) %>% 
+  rename(lga = LGA,
+         pop = `Persons\r\nTotal...22`) %>% 
+  filter(!is.na(lga),
+         lga != "Unincorporated Vic") %>% 
+  # Remove brackets at the end of lga variable to match covid_cb_tot data
+  mutate(lga = str_remove(lga, "\\s\\(.+\\)"),
+         lga = if_else(lga == "Colac-Otway", "Colac Otway", lga))
+  
+# Include population cubble data
+covid_cb_tot <- covid_cb_tot %>%
+  left_join(pop, by = "lga") 
+
+# Compute additional statistics
+covid_cb_tot <- covid_cb_tot %>%
+  mutate(
+    cases_per10k = cases / pop * 10000, # Cases per 10,000 population
+    lcases = log10(cases + 1) # Log cases 
+    ) 
+```
+
+```{r}
+# Make a contiguous cartogram
+# Current CRS is lat/long (WGS84, EPSG:4326), which is an angle on the globe
+# Cartogram needs spatial locations in metres/numeric (EPSG:3395)
+
+covid_cb_tot_carto <- covid_cb_tot %>% 
+  # Transform CRS to metres/numeric
+  st_transform(crs = 3395) %>% 
+  # Construct cartogram
+  cartogram::cartogram_cont(weight = "pop") %>%
+  # Transform back to lat/long
+  st_transform(crs = st_crs(covid_cb_tot)) 
+
+# The cartogram object contains a mix of MULTIPOLYGON and POLYGON - yes, amazing! 
+covid_cb_tot_carto %>% 
+  ggplot() +
+  geom_sf()
+
+# st_cast() converts geometry collection to be MULTIPOLYGON 
+covid_cb_tot_carto <- st_cast(covid_cb_tot_carto, "MULTIPOLYGON") 
+
+# Check projection & geometry type
+st_geometry(covid_cb_tot_carto)
+
+ggplot(covid_cb_tot_carto) +
+  # label used for ggplotly()
+  geom_sf(aes(fill = cases, label = lga), colour = "white") +
+  scale_fill_distiller("Cases", palette = "YlOrRd",
+                       direction = 1) +
+  theme_map() +
+  theme(legend.position = "bottom") 
+
+plotly::ggplotly()
+```
+
+## f. Spatiotemporal trend
+
+The last step is to examine the spatiotemporal trend in covid cases by making faceted choropleth maps and cartograms. It's more manageable by aggregating to weekly counts, which can then be displayed using 16 maps for the 16 weeks of the data recording. Describe what you learn about case counts across Melbourne from the facetted maps. (We only make three maps here because it is really slow to layout 16.)
+
+```{r}
+# Aggregate counts to weekly, to examine temporal trend & re-compute cases per week
+covid_week <- covid_cb %>%
+  # Get state level long cubble
+  cubble::face_temporal() %>%
+  group_by(week = week(date)) %>%
+  # Compute weekly no. of cases
+  summarise(wk_cases = sum(cases, na.rm = TRUE)) 
+
+# Include population data, compute weekly cases per 10,000 population
+covid_week <- 
+  covid_week %>% 
+  left_join(pop, by = "lga") %>%
+  mutate(wk_cases_per10k = max(wk_cases / pop * 10000, 0)) %>%
+  filter(!is.na(wk_cases)) %>%
+  # move time invariant variable (geometry) into the long form 
+  cubble::unfold(geometry) 
+```
+
+
+```{r}
+# Analyse week 38-40
+covid_week <- covid_week %>% 
+  filter(between(week, 38, 40))
+
+# Facetted Choropleth map
+ggplot(covid_week) +
+  geom_sf(aes(geometry = geometry, 
+              fill = wk_cases), colour = "white") +
+  scale_fill_distiller("Cases", palette = "YlOrRd",
+                       direction=1) +
+  facet_wrap( ~ week, ncol = 3) +
+  theme_map() +
+  theme(legend.position = "bottom") +
+  labs(title = "choropleth map")
+
+# Join to the cartogram
+lga_covid_week_carto <-
+  covid_cb_tot_carto %>%
+  left_join(covid_week, by = "lga") 
+
+# Make the facetted cartogram
+ggplot(lga_covid_week_carto) + 
+  geom_sf(aes(fill = wk_cases), colour = "white") + 
+  scale_fill_distiller("Cases", palette = "YlOrRd",
+                       direction=1) + 
+  facet_wrap(~ week, ncol = 3) +
+  theme_map() +
+  theme(legend.position = "bottom") +
+  labs(title = "Cartogram")
+```
+
+## g. Standardised measurements
+
+The code for standardising counts to cases per 10,000 people, is also provided. Re-make the cartograms with this statistic. Does the spatial-temporal pattern of COVID incidence change? Which is the better statistic to use, with the population re-shaped cartogram?
+
+```{r}
+# Cartogram for cases per 10,000 people
+ggplot(lga_covid_week_carto) + 
+  geom_sf(aes(fill = wk_cases_per10k), colour = "white") + 
+  scale_fill_distiller(name = "Cases",
+                       palette = "YlOrRd", 
+                       direction = 1) + 
+  facet_wrap(~ week, ncol = 3) +
+  theme_map() +
+  theme(legend.position = "bottom")
+```
+
+## h. Hexagon tile map
+
+Use the provided code to make a hexagon tile map, with functions from the `sugarbag` package, . 
+
+```{r}
+# Placement of hexmaps depends on position relative to Melbourne Central
+data(capital_cities, package = "sugarbag")
+
+covid_hexmap <-
+  create_hexmap(
+    shp = covid_cb_tot, # shape file
+    sf_id = "lga", # unique id
+    focal_points = capital_cities # reference locations
+    ) %>% 
+  # create_hexmap code removed cases!
+  left_join(covid_cb_tot, by = "lga") 
+
+# This shows the centroids of the hexagons
+ggplot(covid_hexmap, aes(x = hex_long, y = hex_lat)) +
+  geom_point()
+```
+
+
+```{r}
+# Hexagons are made with the `fortify_hexagon` function
+covid_hexmap_poly <-
+  covid_hexmap %>%
+  fortify_hexagon(sf_id = "lga", 
+                  hex_size = 0.1869) 
+  
+# --- Weekly cases
+ggplot() +
+  geom_sf(data = covid_cb_tot, 
+          fill = "grey95",
+          colour = "white",
+          size = 0.1) +
+  geom_polygon(data = covid_hexmap_poly, 
+               aes(x = long, 
+                   y = lat,
+                   group = hex_id, 
+                   fill = cases, 
+                   colour = cases), 
+               size = 0.2) +
+  scale_fill_distiller(name = "Cases", 
+                       palette = "YlOrRd",
+                       direction = 1) +
+  scale_colour_distiller(name = "Cases", 
+                         palette = "YlOrRd",
+                         direction = 1) +
+  theme_map() +
+  theme(legend.position = "bottom")
+
+# Now join to the weekly data to make faceted hex maps
+covid_week_hexmap <- covid_hexmap %>%
+  fortify_hexagon(sf_id = "lga", hex_size = 0.1869) %>%
+  full_join(covid_week, by = "lga")
+
+# --- Cases per 10,000
+ggplot() +
+  geom_sf(data = covid_cb_tot, 
+          fill = "grey95", 
+          colour = "white",
+          size = 0.1) +
+  geom_polygon(data = covid_week_hexmap, 
+               aes(x = long, 
+                   y = lat,
+                   group = hex_id, 
+                   fill = wk_cases_per10k, 
+                   colour = wk_cases_per10k),
+               size = 0.1) +
+  scale_fill_distiller(name = "Cases",
+                       palette = "YlOrRd",
+                       direction = 1) +
+  scale_colour_distiller(name = "Cases",
+                         palette = "YlOrRd",
+                         direction = 1) +
+  facet_wrap(~ week, ncol = 3) +
+  theme_map() +
+  theme(legend.position = "bottom")
+```
+
