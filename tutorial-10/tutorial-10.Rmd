@@ -1,0 +1,850 @@
+---
+title: "ETC5521 Tutorial 10"
+subtitle: "Sculpting data using models, checking assumptions, co-dependency and performing diagnostics"
+author: "Dr Michael Lydeamore"
+date: "Week 10"
+output:
+  bookdown::html_document2:
+    toc: true
+    number_sections: false
+---
+
+
+```{css, echo = FALSE}
+.context, .question, .answer {
+  padding: 10px;
+  border: 1px solid black;
+  margin-bottom: 5px;
+}
+
+.context { background-color: #85C1E9; }
+.question { background-color: #A3E4D7; }
+.answer { background-color: #F9E79F; }
+
+
+.context::before, .question::before, .answer::before {
+  font-weight: bold;
+  font-style: italic;
+}
+
+.context::before { content: "Context";}
+.question::before { content: "Question";}
+.answer::before { content: "Answer";}
+```
+
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(
+  echo = FALSE, 
+  message = FALSE, 
+  warning = FALSE, 
+  cache = TRUE,
+  cache.path = "cache/",
+  fig.path = "images/tutorial10/",
+  fig.align = "center"
+)
+
+library(tidyverse)
+library(broom)
+library(patchwork)
+library(colorspace)
+
+# Set default theme for document
+ggplot2::theme_set(theme_bw())
+```
+
+# 📡 Objectives
+
+These exercise are to do some exploratory analysis with graphics and statistical models, focussing on logistic regression, LOESS and multiple linear regression.
+
+# 🚀 Preparation
+
+Download the following data: [`custody.txt`](https://raw.githubusercontent.com/numbats/eda/master/data/custody.txt), [`insure.txt`](https://raw.githubusercontent.com/numbats/eda/master/data/insure.txt), [`titanic.txt`](https://raw.githubusercontent.com/numbats/eda/master/data/titanic.txt), [`titanic-missing-age.csv`](https://raw.githubusercontent.com/numbats/eda/master/data/titanic-missing-age.csv) and [`HDLsamples.csv`](https://raw.githubusercontent.com/numbats/eda/master/data/HDLsamples.csv).
+
+# Exercise 1: Prison custody in Australia
+
+::: {.context}
+
+The data in `custody.txt` give the number of deaths in prison custody in Australia in each of the six years 1990 to 1995, given separately for Aboriginal and Torres Strait Islanders (indigenous) and others (non-indigenous).
+
+| Variable   | Description                                                     |
+|-------------------------|------------------------------------|
+| Year       | 1990 through 1995                                               |
+| Indigenous | Yes = Aboriginal or Torres Strait Islander, No = Non-indigenous |
+| Prisoners  | Total number in prison custody                                  |
+| Deaths     | Number of deaths in prison custody                              |
+| Population | Adult population (15+ years)                                    |
+
+The data were collected in response to the Royal Commission into Aboriginal Deaths in Custody, the final report of which was tabled in the Federal Parliament on the 9 May 1991 and the original source of the data is from *Indigenous deaths in custody 1989 - 1996 / a report prepared by the Office of the Aboriginal and Torres Strait Islander Social Justice Commissioner for the Aboriginal and Torres Strait Islander Commission*. Aboriginal and Torres Strait Islander Commission, Canberra, 1996.
+
+Read in the data `custody.txt` (optionally create a new variable `group` as below) and answer the following questions.
+
+```{r custody-data, echo = TRUE}
+custody <- read.table(here::here("data/custody.txt"),
+                      header = TRUE) %>%
+  mutate(group = ifelse(Indigenous == "Yes",
+                        "Indigenous",
+                        "Non-Indigenous"))
+```
+
+:::
+
+::: {.question}
+
+## (a) 
+
+The Royal Commission was concerned with the Aboriginal and Torres Strait Islander deaths in custody. How does the rate of deaths in custody of an incarcerated indigenous person compare to that of an incarcerated non-indigenous person? What graphics would you produce to study this comparison?
+
+:::
+
+```{r}
+# Deaths among every 1,000 prisoners across all years
+p1 <- custody %>% 
+  group_by(group) %>% 
+  summarise(deaths = sum(Deaths),
+            prisoners = sum(Prisoners)) %>% 
+  ggplot(aes(x = group,
+             y = deaths/prisoners * 1000,
+             fill = group)) +
+  geom_col(show.legend = FALSE) +
+  scale_fill_discrete_qualitative() +
+  labs(x = "",
+       y = "Deaths amonge very 1,000 prisoners") 
+
+# Deaths among every 1,000 prisoners per year
+p2 <- ggplot(custody, 
+             aes(x = Year, 
+                 y = Deaths/Prisoners * 1000, 
+                 color = group)) +
+  geom_point(size = 3) +
+  geom_line(size = 2) + 
+  scale_color_discrete_qualitative() + 
+  labs(y = "Deaths among every 1000 prisoners",
+       colour = "Group")
+
+(p1 / p2) + plot_annotation(tag_levels = "A")
+```
+
+* Plot (A) **aggregate** number of deaths among prisoners over the years, but ignores variation/trend across the years.
+
+* Plot (B) plots death among prisoners **over the years**, we can see some variation across the years. 
+
+  * The proportion of deaths for prisoners with indigenous heritage is higher (except in 1992-1993) but the difference may not be significantly different (uncertainty measures need to be calculated to confirm this). 
+
+::: {.question}
+
+## (b)
+
+The work of the commission established that indigenous people in custody do not die at a greater rate than non-indigenous people in custody, however, the indigenous people are over-represented in custody. Produce graphics that support (or don't support) this statement.
+
+:::
+```{r}
+custody_wide <- custody %>% 
+  pivot_wider(Year, 
+              names_from = Indigenous,
+              values_from  = Prisoners:Population) %>% 
+  mutate(
+    # Custody rates = prisoners / population
+    custodyRate_Ind = Prisoners_Yes / Population_Yes,
+    custodyRate_Non = Prisoners_No / Population_No,
+    
+    # Death rates = deaths / prisoners
+    deathRate_Ind = Deaths_Yes / Prisoners_Yes,
+    deathRate_Non = Deaths_No / Prisoners_No,
+    
+    # Custody rates odds = ind custody rates / Non-ind custody rates
+    custodyRate_odds = custodyRate_Ind / custodyRate_Non,
+    
+    # % diff in custody rates for ind & non-ind population
+    custodyRate_pdiff = (custodyRate_Ind - custodyRate_Non) / custodyRate_Non,
+    
+    # % diff in death rates for ind & non-ind population
+    deathRate_pdiff = (deathRate_Ind - deathRate_Non) / deathRate_Non
+    )
+```
+
+```{r}
+# % diff in death rates for ind & non-ind population
+p1 <- ggplot(custody_wide, 
+             aes(x = Year, y = deathRate_pdiff)) + 
+  geom_point() +
+  geom_line() + 
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  labs(title = "Proportionate difference of death rate",
+       subtitle = "Indigeneous and non-indigeneous population in custody")
+
+# % diff in custody rates for ind & non-ind population
+p2 <- ggplot(custody_wide,
+             aes(x = Year, y = custodyRate_pdiff)) + 
+  geom_point() + 
+  geom_line() + 
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  labs(title = "Proportionate difference of custody",
+       subtitle = "Indigeneous and non-indigeneous population")
+
+(p1 / p2) + plot_annotation(tag_levels = "A")
+```
+
+* There are a number of ways to compare this. 
+
+* In Plots (A) and (B), the proportionate differences of the deaths in custody and custody of indigenous and non-indigenous population are plotted over time, respectively. 
+
+* If death in custody rate of indigenous prisoners is greater than that of non-indigenous prisoners, then the proportionate differences should have a magnitude significantly greater than 0.
+
+  * It is quite clear from Plot (B), the custody rate of indigenous population is significantly higher than that of non-indigenous population given that it is much greater than 0, whereas the difference is much less for the death in custody rate as shown in Plot (A).
+  
+::: {.question}
+
+## (c)
+
+The rate of incarceration for both indigenous people and non-indigenous people appear to be increasing with time. Plot the proportion of custody over time for indigenous and non-indigenous population. Would you think the proportion of incarceration is increasing at a constant rate each year for both groups?
+
+:::
+
+```{r}
+# Plot rate of incarceration over time
+ggplot(custody, 
+       aes(x = Year, y = Prisoners/Population)) +
+  geom_point() + 
+  geom_line() +
+  facet_wrap(~ group
+             # scales = "free_y"
+             ) 
+```
+
+* Relative to the non-indigenous, the rate of incarceration is much higher for indigenous people (though on a different scale)
+
+::: {.question}
+
+## (d)
+
+Fit the following models. What is the rate of increase in the proportion of incarceration for each group according to each of the models below? Is the rate constant each year?
+
+```{r custody-models, echo = TRUE}
+# -- No log transformation
+fit_ind <- lm(Prisoners / Population ~ Year, 
+              data = subset(custody, Indigenous == "Yes"))
+
+fit_non <- lm(Prisoners / Population ~ Year,
+              data = subset(custody, Indigenous == "No"))
+
+# --- Log transformation
+
+fit_ind_log <- lm(log10(Prisoners / Population) ~ Year, 
+                  data = subset(custody, Indigenous == "Yes"))
+
+fit_non_log <- lm(log10(Prisoners / Population) ~ Year, 
+                  data = subset(custody, Indigenous == "No"))
+```
+
+:::
+
+```{r, include=FALSE}
+# Extract coefficients
+coef(fit_ind)
+coef(fit_non)
+
+coef(fit_ind_log)
+coef(fit_non_log)
+```
+
+* The rate is constant (*i.e.* `Year` coefficient approx. 0) when there is **no log transformation**
+
+* Rate is not constant when the response is **log transformed**.
+
+::: {.question}
+
+## (e)
+
+Below shows the fitted line from the fitted models in (c). Which model matches up with which plot?
+
+:::
+
+```{r custody-plots, echo = TRUE}
+ggplot(custody, aes(Year, log10(Prisoners / Population))) + 
+  geom_point() + 
+  geom_smooth(method = "lm") + 
+  facet_wrap(~group, scales = "free_y") + 
+  labs(tag = "(A)") 
+
+ggplot(custody, aes(x = Year, y = Prisoners / Population)) + 
+  geom_point() + 
+  geom_smooth(method = "lm") + 
+  facet_wrap(~group, scales = "free_y") + 
+  labs(tag = "(B)")
+```
+
+* `fit_ind_log` and `fit_non_log` matches up with (A) and (B), while `fit_ind` and `fit_non` matches up with (B).
+
+::: {.question}
+
+## (f)
+
+Another way to compare the proportion of incarceration across the groups is to look at the odds ratio over time. Draw the graph below. What is the comparison in this case?
+
+```{r custody-odds-plot}
+ggplot(custody_wide, aes(Year, custodyRate_odds)) + 
+  geom_line() + 
+  geom_hline(yintercept = 1, linetype = "dashed") + 
+  labs(y = "Odds of custody of indigenous population\n over non-indigenous population")
+```
+:::
+
+* In this case we are looking at the odds ratio of the custody rate for indigenous to non-indigenous population. 
+
+* If the custody rate is the same for the two groups, it should be close to 1. 
+
+* So the comparison we are making here is the observed odds ratio with 1. 
+
+::: {.context}
+
+# Exercise 2: Insurance premium rates
+
+Age specific term life premium rates for a sum insured of \$50,000 are given in the data `insure.txt`. The first column is the age of insured, the next two columns are the rates for male smokers and non-smokers, and the last two columns are the rates for female smokers and non-smokers. The data originally appeared in *National Roads and Motorists Association magazine* (Australia), The Open Road, June 1985, 14.
+
+::: 
+
+::: {.question}
+
+## (a)
+
+Read the data in and change the format of the data such that you will have 4 columns relating to the `premium`, `smoker`, `gender` and `age`.
+
+:::
+
+```{r, echo = TRUE}
+insure <- read_tsv(here::here("data/insure.txt"))
+
+insure_long <- insure %>% 
+  rename(age = Age) %>% 
+  pivot_longer(-age,
+               names_to = c("gender", "smoker"), # split names to 2 columns
+               names_pattern = c("(.)(.*)"),
+               values_to = "premium")
+```
+
+
+::: {.question}
+
+## (b)
+
+Plot `premium` against `age` for each combination of the smoking status and gender group.
+
+:::
+
+```{r}
+ggplot(insure_long, aes(x = age, y = premium)) +
+  geom_point() + 
+  facet_grid(smoker ~ gender) 
+```
+
+* There appears to be an increasing trend, where premium increases which age
+  
+  * trend appears to be similar for both smokers and non-smokers alike
+
+::: {.question}
+
+## (c)
+
+We can see from the plot in (b) that a polynomial regression of premium on age for each `smoker` and `gender` group combination seems appropriate. What would you choose the degree of a polynomial as? Plot these polynomial fits to the plot in (b).
+
+:::
+
+```{r}
+ggplot(insure_long, aes(x = age, y = premium)) +
+  geom_point() + 
+  facet_grid(smoker ~ gender) + 
+  geom_smooth(method = "lm",
+              formula = "y ~ poly(x, 3)") # lm(premium ~ poly(age, 2), data = insure_long)
+```
+
+* In the initial instance, a polynomial of degree 2 appears appropriate and the plotted curve below seems to support this.
+
+::: {.question}
+
+## (d)
+
+Perform diagnostics for the model fitted in (c).
+
+:::
+
+```{r}
+fit_poly <- function(degree){
+  insure_long %>%
+    group_by(gender, smoker) %>%
+    group_modify(
+      .data = .,
+      .f = ~ lm(premium ~ poly(age, degree), data = .) %>% augment() %>% select(premium, .std.resid)
+    ) %>%
+    mutate(age = insure$Age)
+}
+
+# Degree 2 polynomial
+fit_poly(2) %>% 
+  ggplot(aes(x = age, y = .std.resid)) +
+  geom_point() +
+  facet_grid(smoker ~ gender) +
+  geom_hline(yintercept = 0, linetype = "dashed") + 
+  labs(x = "Age", y = "Studentized residual")
+
+fit_poly(3) %>% 
+  ggplot(aes(x = age, y = .std.resid)) +
+  geom_point() +
+  facet_grid(smoker ~ gender) +
+  geom_hline(yintercept = 0, linetype = "dashed") + 
+  labs(x = "Age", y = "Studentized residual")
+```
+
+* The diagnostics surprisingly reveal that degree of 2 is not sufficient as there are some obvious patterns in the residual plot.
+
+  * Strong indication of quadratic shape
+  
+* Cubic term appears to improve the fit of the data
+
+
+::: {.context}
+
+# Exercise 3: Survival on the Titanic
+
+RMS Titanic was a British passenger liner that sank in the North Atlantic Ocean in the early morning of 15 April 1912, after colliding with an iceberg during her maiden voyage from Southampton to New York City. Of the estimated 2,224 passengers and crew aboard, more than 1,500 died, making it one of the deadliest commercial peacetime maritime disasters in modern history.
+
+The data on the subset of passengers on the Titanic, found in `titanic.txt`, give their survival status, (`Survived`), together with their names (`Name`), age in years (`Age`), sex (`Sex`) and passenger class (`PClass`).
+
+:::
+
+::: {.question}
+
+## (a)
+
+Read the data `titanic.txt` and perform some IDA. You can find out the passenger information using external sources such as <https://www.encyclopedia-titanica.org>. Do you notice anything unusual in the data?
+
+```{r}
+# Read-in data
+titanic <- read_tsv(here::here("data/titanic.txt"))
+
+# Check missingness
+visdat::vis_miss(titanic)
+```
+
+* There are many missing values for age
+  
+* You many also find that there are passengers with the same names or some passengers that the record cannot be found as explained in more details in (d) 
+  
+:::
+
+::: {.question}
+
+## (b)
+
+Extract the title from the `Name` and see its relation with `Sex` and `PClass`.
+
+:::
+
+
+```{r}
+# --- Extract title from name
+
+# extract word after "," relating to title
+ctitanic <- titanic %>%
+  mutate(title = str_extract(Name, "(?<=,\\s)(\\w+)"),
+         .before = PClass) 
+
+# Where title indicates gender, the sex labels appear to be correct
+ctitanic %>% 
+  select(title, Sex) %>% 
+  table()
+
+# Certain titles that have prestige (*e.g.* Captain, Countess) are in 1st class as expected
+ctitanic %>% 
+  select(title, PClass) %>% 
+  table()
+```
+
+* `(?<=,\\s)`: look behind pattern
+  * `,\\s`: comma followed by a space
+* `\\w+`: Extract any word character (`\\w`), 1 or more time
+
+```{r}
+# Find problematic entries
+problematic_names <- ctitanic %>% 
+  # Filter to titles that are not sensible or are incorrect
+  filter(!title %in% c("Miss", "Mr", "Mrs", "Master",
+                       "Colonel", "Dr", "Major", "Captain",
+                       "Madame","Sir", "Lady", "Jonkheer", "Countess",
+                       "Ms", "Mlle", "Rev")) %>% 
+  pull(Name)
+
+# Fix problematic entries manually
+ctitanic <- ctitanic %>% 
+  mutate(title = case_when(
+    
+    title == "Col" ~ "Colonel", 
+    title == "the" ~ "Countess",
+    
+    # Names without ","
+    Name == "Seman Master Betros" ~ "Master",
+    Name == "Jacobsohn Mr Sidney Samuel" ~ "Mr",
+    
+    # For the remaining problematic names, we can group them based on their Sex
+    Sex == "male" & Name %in% problematic_names ~ "Mr",
+    Sex == "female" & Name %in% problematic_names ~ "Miss",
+    
+    TRUE ~ title
+  )) 
+```
+
+::: {.question}
+
+## (c)
+
+How is the data in `titanic.txt` different to the data `Titanic` in `datasets` package? Note: `datasets` is loaded by default in R so you can see the data by typing `Titanic` in the console and pressing the Enter key.
+
+:::
+
+```{r}
+as_tibble(datasets::Titanic)
+```
+
+* `Titanic` dataset only contains frequency of passengers that survived or not by sex, class & age.
+
+* Age recorded is categorised as child or adult, not age in years as in the `titanic.txt` dataset
+
+  * Aggregated data like `Titanic` give less opportunity for performing sanity checks on the data.
+
+::: {.question}
+
+## (d)
+
+Remove duplicate entries and merge missing age data from `titanic-missing-age.csv` (which was painfully extracted from [this website](https://www.encyclopedia-titanica.org/)). Use this cleaned data for the next question.
+
+:::
+
+```{r}
+# Convert two-column data frame to vector
+age_dict <- read_csv(here::here("data/titanic-missing-age.csv")) %>% 
+  deframe()
+
+# Extract duplicated names
+dup_names <- ctitanic %>% 
+  filter(duplicated(Name)) %>% 
+  pull(Name)
+
+# Three persons with the same name
+ctitanic %>% 
+  filter(Name %in% dup_names) 
+```
+
+```{r}
+ctitanic <- ctitanic %>% 
+  # For duplicate names, pick higher of PClass or age
+  filter(!(Name == "Carlsson, Mr Frans Olof" & PClass == "3rd"),
+         !(Name == "Connolly, Miss Kate" & Age == 30),
+         !(Name == "Kelly, Mr James" & Age == 44)) %>% 
+  # If there is no name match with dictionary, leave age as is, else match with dictionary
+  mutate(Age = ifelse(is.na(age_dict[Name]),
+                      Age, 
+                      age_dict[Name])) 
+
+# Remove entries with missing age
+ctitanic <- ctitanic %>% filter(!is.na(Age))
+```
+
+```{r, eval=FALSE}
+# ----- Lookup table example
+
+x <- c("m", "f", "f", "m", "u", "f")
+
+# Create name for each unique value
+lookup <- c(m = "Male", f = "Female")
+
+# Create lookup table using character matching
+lookup[x]
+```
+
+::: {.question}
+
+## (e)
+
+Fit the following logistic regression model and compare the actual survival of the passengers with the expected probability of survival under this model. If this probability is greater than or equal to 0.5, consider that the passenger survived under this model prediction How well does the prediction match up with the observed data? Explore to see if there is any pattern of how good the prediction is based on age, sex or passenger class.
+
+:::
+
+```{r}
+fit <- glm(Survived ~ Age + Sex + PClass, 
+           family = "binomial",
+           data = ctitanic)
+
+# Extract predicted values 
+ctitanic <- ctitanic %>%
+  mutate(pred = predict(fit, type = "response"))
+```
+
+```{r}
+# Showing accuracy of model
+ctitanic %>%
+  select(pred, Survived) %>% 
+  mutate(pred = ifelse(pred > 0.5, 1, 0)) %>% 
+  table()
+```
+
+```{r}
+# Plot predictions on histogram
+ctitanic %>% 
+  ggplot(aes(x = pred)) +
+  geom_histogram(colour = "white") +
+  geom_vline(xintercept = 0.5, 
+             linetype = "dashed") + 
+  facet_wrap(~ Survived) + 
+  labs(y = "Count", 
+       x = "Predicted probability of survival")
+
+# Plot fitted values against age
+ctitanic %>% 
+  ggplot(aes(x = Age,
+             y = pred, 
+             colour = factor(Survived))) + 
+  facet_grid(Sex ~ PClass) + 
+  geom_hline(yintercept = 0.5, linetype = "dashed") + 
+  geom_jitter(alpha = 0.4) +
+  scale_color_discrete_qualitative() +
+  labs(y = "Predicted probability of survival", 
+       colour = "Survived") 
+```
+
+
+* The prediction for those that survived are not good as seen from Plot (A), many would have been classified as dead under the model actually survived. 
+
+* From Plot (B), all male 2nd and 3rd class passengers are classified as dead while all female 1st and 2nd class passengers are classified as survived.
+
+  * This suggests that the model is inappropriate for prediction of survival and not much different from a naive classifier that designates female 1st or 2nd class passengers as Survived and 2nd or 3rd class passengers as Dead.
+
+
+::: {.context}
+
+# Exercise 4: High-density lipoprotein in human blood
+
+In a study of high-density lipoprotein (HDL, labelled $y$) in human blood a sample of size 42 was used. Measurements were taken on total cholesterol ($x_1$), total triglyceride ($x_2$) as well as noting whether a sticky component, sinking pre-beta (SPB, labelled $x_3$) was present (coded 1) or absent (coded 0). This data is stored in `HDLsamples.csv`. The basis for the analysis is the model $$Y_i = \beta_0 + \beta_1 x_1 + \beta_2 x_2 + \beta_3 x_3 + \epsilon_i,$$ where $\epsilon_i \sim NID(0, \sigma^2).$
+
+```{r}
+samples <- read_csv(here::here("data/HDLsamples.csv"))
+```
+
+* High levels of lipoprotein increase likelihood of having heart attack & stroke
+
+  * Cholesterol travels through the blood on lipoprotein, which are made of protein & fat
+
+* *Goal*: Predict high-density lipoprotein (HDL) level with cholesterol, trigylceride & sinking pre-beta (SPB)
+
+:::
+
+::: {.question}
+
+## (a)
+
+Fit the model above in R and perform some diagnostic checks, i.e. residual plot, boxplot of residuals and the QQ-plot of residuals.
+
+:::
+
+```{r q4a}
+# Fit multiple linear regression model
+fit <- lm(HDL ~ cholesterol + trigylceride + SPB, data = samples)
+
+# Extract residual & fitted values
+df <- augment(fit)
+```
+
+```{r}
+# Response vs predicted values
+g1 <- ggplot(df, aes(x = .fitted, y = HDL)) +
+  geom_point() + 
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed") +
+  labs(x = "Fitted value", tag = "(A)")
+
+# Residual vs fitted values
+g2 <- ggplot(df, aes(x = .fitted, y = .std.resid)) + 
+  geom_point() + 
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  labs(x = "Fitted value", y = "Studentized residual", tag = "(B)")
+
+g3 <- ggplot(df, aes(x = as.factor(SPB), y = .std.resid)) + 
+  geom_boxplot() + 
+  labs(y = "Studentized residual", 
+       x = "SPB", tag = "(C)") 
+
+g4 <- ggplot(df, aes(sample = .std.resid)) + 
+  stat_qq() +
+  stat_qq_line(linetype = "dashed") +
+  labs(x = "Theoretical quantiles",
+       y = "Sample quantiles", tag = "(D)")
+
+(g1 + g2) / (g3 + g4)
+```
+
+**(A)** 
+  * If all values lie on the 45° line, we have a perfect prediction
+  
+  * *e.g.* actual value = 45, predicted = 45
+  
+**(B)**
+
+  * detect lack of fit **or** check constant variance assumption on the errors
+  
+  * Ideally, observations should be symmetrically distributed & tending towards 0
+    
+    * With no clear patterns (*i.e.* non-random patterns)
+    
+**(C)**
+  
+  * Checks for symmetry
+
+**(D)**
+  
+  * Assess residuals for normality
+
+::: {.question}
+
+## (b)
+
+Are there any high leverage points in this data set? What would you characterise as a high leverage point?
+
+:::
+
+```{r}
+# highest .hat value had high trigylceride values
+df %>% 
+  slice_max(.hat, n = 3)
+
+# Let's see what it looks like relative to HDL
+ggplot(data = df,
+       aes(x = trigylceride, 
+           y = HDL, 
+           color = .hat)) +
+  geom_point(size = 2) +
+  scale_color_continuous_sequential()
+```
+
+
+* High leverage → observation unusually far from sample mean in the $x$ (horizontal) direction (*e.g.* from $x_{1,i}$ far from $\bar{x}_1$) → greater influence on fitted regression function
+    
+  * small change in their $y$ value can substantially affect the fitted line
+  
+  * leverage is not dependent on the response
+
+* There is one point that has a leverage value > 0.3. Plotting this as below shows that the point has the maximum triglyceride value with a gap of about 100 units with the next highest trigylceride value. This gap appears to be a lot higher than other values.
+
+::: {.question}
+
+## (c)
+
+Are there any outliers in this data?
+
+:::
+
+Cooks Distance -- a scaled measure of the change in the fit if the single case is dropped from the dataset
+
+* “What will happen if you drop the observation?”
+
+* Cook's D takes both horizontal & vertical deviations into account
+    - *i.e.* a large residual combined with a large leverage will result in a large Cook statistic
+
+```{r}
+# Extract observations with highest cooks distance
+df %>% 
+  slice_max(.cooksd, n = 3)
+```
+
+* Looking at the Cook's distance for each observation, the point that had the highest leverage value also has the highest Cook's distance.
+
+* Whether to remove this observation or not requires further clarification or investigation.
+
+* We can see from the slope estimates of `fit2` and `fit` differ a fair bit suggesting that this point exerts a large influence on parameter estimates (as somewhat expected). 
+
+```{r}
+ggplot(df, 
+       aes(x = cholesterol, 
+           y = trigylceride, 
+           colour = .cooksd)) + 
+  geom_point(size = 2) +
+  scale_color_continuous_sequential() + 
+  facet_wrap(~ SPB)
+```
+
+```{r}
+# Fit regression model without observation with highest cooks distance value
+fit2 <- lm(HDL ~ cholesterol + trigylceride + SPB, 
+           data = subset(df, .hat < max(.cooksd)))
+
+coef(fit)
+coef(fit2)
+```
+
+* We can see from the slope estimates of `fit2` and `fit` differ a fair bit suggesting that this point exerts a large influence on parameter estimates (as somewhat expected). 
+
+::: {.question}
+
+## (d)
+
+The function `sigma` on the linear model object in (a) will give an estimate of $\sigma$ which we denote as $\hat{\sigma}$. Generate about 19 sets of random variables drawn independently from $N(0, \hat{\sigma})$ of the same size as the data. Draw a QQ-plot for each sample (there should be 19 plots in total). Compare this to the QQ-plot of the residuals in (a). Can you distinguish the QQ-plot of the residuals and the other QQ-plots? Ask your fellow classmates as well. What do you think this means?
+
+:::
+
+```{r}
+set.seed(1)
+
+# Generate 19 sets of random variables drawn from N(0, \hat{\sigma})
+out <- map_dfr(1:19, ~{
+  tibble(.resid = rnorm(n = nrow(samples), 
+                        mean = 0, 
+                        sigma(fit)) # Estimate of standard deviation
+         ) %>%  
+    # Include sample number
+    mutate(sample = .x)
+  }) %>% 
+  # Put actual QQ-plot from model fit
+  bind_rows(tibble(.resid = df$.resid, sample = 20))
+
+out %>% 
+  ggplot(aes(sample = .resid)) +
+  stat_qq() +
+  stat_qq_line(linetype = "dashed") +
+  facet_wrap(~sample) +
+  theme(aspect.ratio = 1)
+```
+
+* Here you may choose to use `fit2` instead of `fit`. 
+
+* Note that in a linear model, we assume that errors ($\epsilon_1, \dots, \epsilon_n$) are normally distributed ($\epsilon \sim N(0, \sigma)$)
+
+* Plots 1-19 below are generated from independent draws of $N(0, \hat{\sigma}^2)$. If this is also the case for Plot 20, it should not be easy to distinguish Plot 20 from Plot 1-19. This is the basis of visual inference which we expand on Week 11.
+
+# Quiz questions {.unlisted .unnumbered}
+
+```{r, include=FALSE, eval=FALSE}
+x <- runif(n = 10000, min = 0, max = 1)
+y <- rnorm(n = 10000, mean = x, sd = 1)
+lm(y ~ x)
+
+ggplot(tibble(x,y), 
+       aes(x,y)) +
+  geom_point() +
+  geom_smooth(method = "lm")
+```
+
+
+```{r, include=FALSE, eval=FALSE}
+# Quiz questions
+x <- runif(n = 100000, min = 1, max = 10)
+y <- rexp(n = 100000, rate = 0.1) # mean = 1/0.1 = 10
+lm(y ~ x)
+
+ggplot(tibble(x,y),
+       aes(x,y)) +
+  geom_point() +
+  geom_smooth(method = "lm")
+``` 
+
+
+
+
+
+
