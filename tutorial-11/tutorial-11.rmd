@@ -1,0 +1,422 @@
+---
+title: "ETC5521 Tutorial 11"
+subtitle: "Statistical inference for exploratory methods"
+author: "Dr Michael Lydeamore"
+date: "Week 11"
+output:
+  bookdown::html_document2:
+    toc: true
+    number_sections: false
+---
+
+```{css, echo = FALSE}
+.context, .question, .answer {
+  padding: 10px;
+  border: 1px solid black;
+  margin-bottom: 5px;
+}
+
+.context { background-color: #85C1E9; }
+.question { background-color: #A3E4D7; }
+.answer { background-color: #F9E79F; }
+
+
+.context::before, .question::before, .answer::before {
+  font-weight: bold;
+  font-style: italic;
+}
+
+.context::before { content: "Context";}
+.question::before { content: "Question";}
+.answer::before { content: "Answer";}
+
+```
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(
+  echo = FALSE, 
+  message = FALSE, 
+  warning = FALSE, 
+  cache = FALSE,
+  eval = TRUE,
+  cache.path = "cache/",
+  fig.path = "images/tutorial11/",
+  fig.align = "center"
+)
+```
+
+```{r libraries, include = FALSE}
+library(tidyverse)
+library(broom)
+library(datarium)
+library(nullabor)
+
+# Set default theme for document
+ggplot2::theme_set(theme_bw())
+```
+
+# 🤺 Objectives 
+
+This tutorial is designed to apply visual inferences to different types of plots.
+
+# Exercise 1: Skittles experiment
+
+::: {.context}
+
+Skittles come in five colors (orange, yellow, red, purple, green) each with their own flavours (orange, lemon, strawberry, grape, green apple). [Data was collected by Dr Nick Tierney](https://github.com/njtierney/skittles/tree/master/data-raw) to explore whether a sample of 3 people could identify the flavour of skittles while blindfolded. You can find the cleaned tidy data [here](https://raw.githubusercontent.com/njtierney/skittles/master/data/skittles.csv).
+
+```{r}
+# Read-in data
+skittle <- read_csv("https://raw.githubusercontent.com/njtierney/skittles/master/data/skittles.csv",
+                    col_types = "fffccl") %>%
+  mutate(order = factor(order, levels = 1:10))
+```
+
+:::
+
+## (a)
+
+How many skittles did each person taste?
+
+```{r Q1a}
+skittle %>% 
+  count(person)
+```
+
+* Each person tasted 10 skittles
+
+## (b)
+
+A person with loss of taste is called *ageusia* and a person who has a loss of smell is called *anosmia*. The loss of taste and loss of smell will not allow you to distinguish flavours in food. What is the probability that a person with ageusia and anosmia will guess the skittle flavour correctly (out of the five flavours) for one skittle?
+
+* If one cannot distinguish flavours, they will choose one of five flavours randomly. 
+  
+  * probability of selecting one correct favour is therefore $1/5$.
+
+## (c)
+
+What is the probability that a person with *ageusia and anosmia* will guess the skittle flavour correctly for *2 out of 10 skittles*, assuming the order of taste does not matter?
+
+```{r}
+# Using binomial formula
+choose(10, 2) * 0.2 ^ 2 * 0.8 ^ 8
+
+# Using stats package
+dbinom(x = 2, # X 
+       size = 10, # n
+       prob = 1/5) # p
+```
+
+* Suppose $X$ is the number of skittles that they correctly identified the flavour. 
+
+* Then assuming that the person cannot distinguish flavours and order of tasting the skittles does not matter, $X \sim B(10, 0.2)$.
+
+* Then $P(X = 2) = {10 \choose 2} 0.2^5 0.8^5\approx 0.3$. So there's only about 30% chance such an event happens!
+
+**R syntax**
+
+* `dbinom()` obtains probability density function from binomial distribution for a particular $X$
+
+* `pbinom()` obtains cumulative density function from binomial distribution
+    - find probability -- *e.g.* how much of the distribution is to the left of indicated value
+  
+## (d)
+
+Test the hypothesis that people have the ability to distinguish skittle flavours correctly. Assume that the order of tasting does not matter and each person has the same ability to correctly identify the flavours. In conducting your test, define your null and alternate hypothesis, your assumptions, the test statistics and calculate the $p$-value. 
+
+
+* Suppose $X$ is the no. of skittles that a person identified the flavour correctly for **15 out of 30 skittles**. 
+
+* Suppose each tasting is independent and has a equal probability of identifying the flavour correctly; we denote this probability as $p$. 
+
+```{r Q1d}
+# P(X >= 15)
+1 - pbinom(q = 14, # X: No. of skittles correctly identified
+           size = 30, # n
+           prob = 0.2 # probability or correctly identifying by random
+           )
+```
+
+* We test the hypotheses: $H_0: p = 0.2$ vs. $H_1: p > 0.2$.
+
+  * Under $H_0$, $X\sim B(30, 0.2)$ and therefore the $p$-value is $P(X \geq 15) \approx 0.0002$. The $p$-value is small so the data supports that people can correctly identify the flavour of a skittle!
+
+```{r}
+# --- Extra: Looking at results on a plot
+
+# Probability of X = 1 to X = 30
+df <- map_dfr(0:30, ~{
+  tibble(p = dbinom(.x, 10, prob = 1/5)) %>%
+    mutate(x = .x, .before = p)
+  }) 
+
+# Probability of identifying more than half of the flavours correctly (X >= 14)
+df %>% 
+  ggplot(aes(x = x, y = p)) +
+  # probability distribution
+  geom_col() +
+  # colour bars from x > 14
+  geom_col(data = subset(df, x >= 15),
+           fill = "red") +
+  geom_vline(xintercept = 15,
+             colour = "red") +
+  geom_text(aes(y = 0.2, x = 15),
+            nudge_x = 2,
+            label = str_wrap("observed number of successes", 15),
+            check_overlap = TRUE,
+            colour = "red",
+            ) +
+  scale_x_continuous(breaks = seq(0, 30, 1)) +
+  labs(title = "PDF under the null hypothesis",
+       x = "X")
+```
+
+## (e)
+
+In part (d) we disregarded the order of the tasting and the possible variability in people's ability to correctly identify the flavour. If in fact these do matter, then how would you construct the test statistic? Is it easy?
+
+**Constructing test statistic**
+  
+  * Construct summary statistic with some known distribution under the null hypothesis with large (or extreme) values indicating rejection of the null hypothesis
+  
+  * Suppose $X_1, X_2 \text{ and } X_3$ are the number of skittles correctly identified out of 10 for person a, b & c
+  
+  * If each *tasting is independent*, then $X_1 \sim B(10, p_1)$, $X_2 \sim B(10,p_2))$ & $X_3 \sim B(10,p_3))$
+  
+    * where $p_i$ is the probability that the $i^{th}$ person correctly identifies the flavour of a skittle
+    
+  * Under $H_0$, we can assume $p_1 = p_2 = p_3 = 1/5$ & assume *each person is independent*, $X_1 + X_2 + X_3 \sim B(30, 0.2)$
+  
+**Removing assumptions**
+  
+  * If we removed the assumption that tasting is independent (*i.e.* order of tasting matters), the distribution of the test statistic does not hold true any longer
+  
+---
+
+* *Independence within groups*: tasting is independent & order of taste doesn't matter
+  
+  * *e.g.* a person tasted lemon in round 1, it will not affect the guesses in subsequent rounds
+
+* *independent between groups*: The choices made by one person, does not affect the choices made by another
+
+  * *e.g.* Person A's choice does not affect person's B choices
+  
+
+## (f) 
+
+Consider the plot below that shows in each tile whether a person guessed correctly by order of their tasting. Suppose that under the null hypothesis, the order of tasting does not matter and people have no ability to distinguish the flavours. Generate a null plot under this null hypothesis.
+
+```{r}
+# Original guesses by person a, b, c
+gtile <- skittle %>% 
+  ggplot(aes(x = order, y = person, fill = factor(correct))) +
+  geom_tile(colour = "black", size = 2) +
+  coord_equal() +
+  scale_fill_viridis_d() 
+gtile
+```
+
+```{r}
+set.seed(1)
+
+# Generate null data with Binomial distribution; only `correct` variable changes
+method <- nullabor::null_dist(var = "correct", 
+                              dist = "binom", 
+                              params = list(size = 1, # X
+                                            prob = 0.2) # p
+                    )
+
+# Plot null data
+gtile %+% method(df = skittle)
+```
+
+## (g)
+
+Based on (f), construct a lineup (using `nullabor` or otherwise) of 20 plots. Ask your peers, family or friends which plot looks different.
+
+* The line-up protocol places the plot of the actual data among a field of plots of null data
+
+```{r Q1g, fig.width=10, fig.height = 8, message = TRUE}
+lineup_df <- nullabor::lineup(
+  method = method, # method to generate null dataset
+  true = skittle, # true dataset
+  n = 20 # 20 plots, with 1 real data embedded against all plots
+  )
+
+gtile %+% 
+  lineup_df +
+  facet_wrap( ~ .sample) +
+  guides(fill = FALSE) +
+  theme(axis.text = element_blank(),
+        axis.title = element_blank())
+
+# decrypt("23eg MuPu NE KwWNPNwE F5")
+```
+
+## (h)
+
+Suppose that you have a response from 100 people based on your line-up from (g) and 76 correctly identified the data plot. What is the p-value from this visual inference?
+
+We suppose that each person has the same ability to identify the data plot.
+
+```{r}
+# P(X ≥ 76)
+1 - pbinom(
+  q = 75, # no. of people who correctly identified plot
+  size = 100, # total no. of observers
+  prob = 0.05 # 1 in 20 chance to select correctly identified plot
+  )
+```
+
+
+  * If we let X be the number of people who correctly identified the data plot in the line-up, then $X \sim B(100,p)$.
+  
+  * The visual inference p-value is calculated from testing the hypotheses $H_0: p = 0.05$ vs $H1: p \ne 0.05$, and so is $P(X \ge 76) \approx 0$.
+  
+  * The visual inference p-value is very small so there is strong evidence to believe that the structure in the data deviates away from the null distribution!
+    
+    * This indicates that people can indeed tell the actual data from the other 19 null data
+    
+
+## (i) 
+
+Now consider the plot below. Use the same null data in (g) to construct a lineup based on below visual statistic. Suppose we had 28 people out of 100 who correctly identified the data plot in this lineup. What is the difference in power of visual statistic in (f) and this one?
+
+```{r}
+# Compute total correct & plot bar chart
+gbar <- skittle %>% 
+  group_by(person) %>% 
+  summarise(correct = sum(correct)) %>% 
+  mutate(person = fct_reorder(person, correct, sum)) %>% 
+  ggplot(aes(x = person, y = correct)) +
+  geom_col() +
+  labs(x = "Person", y = "Correct") +
+  # include reference line
+  geom_hline(yintercept = 3)
+gbar
+```
+
+```{r}
+gbar %+% lineup_df +
+  facet_wrap(~ .sample) +
+  theme(axis.text = element_blank(),
+        axis.title = element_blank())
+```
+
+* The estimated power of visual statistic in (h) is 76 / 100 (76%) & for the barplot its 26 / 100 (26%). 
+
+  * the difference in power is 50%
+
+
+# Exercise 2: Social media marketing
+
+::: {.context}
+
+The data `marketing` in the `datarium` R-package contains information on sales with advertising budget for three advertising media (youtube, facebook and newspaper). This advertising experiment was repeated 200 times to study the impact of the advertisting media on sales. 
+
+```{r}
+data(marketing, package = "datarium")
+# help(marketing, package = "datarium")
+```
+
+:::
+
+
+## (a)
+
+Study the pairs plot. Which of the advertising medium do you think affects the sales?
+
+```{r}
+GGally::ggpairs(marketing)
+```
+
+
+The pairs plot suggest that advertising on YouTube is highly correlated with the sales and advertising on Facebook is moderately correlated with the sales. Newspaper advertisement does not appear to be correlated highly with the sales. 
+
+## (b)
+
+Construct a coplot for sales vs advertising budget for facebook conditioned on advertising budget for youtube and newspaper. (You may like to make the intervals non-overlapping to make it easier to plot in `ggplot`). What do you see in the plot?
+
+* Goal: determine if budget of facebook and sales are affecetd by Youtube and Facebook.
+
+```{r}
+marketing %>% 
+  ggplot(aes(x = facebook, y = sales)) +
+  geom_point() + 
+  facet_grid(cut_number(youtube, 4) ~ cut_number(newspaper, 4)) + 
+  geom_smooth(method = "lm")
+```
+
+* The newspaper does not seem to have much affect on the sales 
+
+* It is noticeable that sales is linearly related to Facebook’s advertisement budget conditioned on Youtube
+
+## (c)
+
+Now construct a coplot for sales vs advertising budget for facebook conditioned on advertising budget for youtube alone. Superimpose a linear model on each facet. Is there an interval where the linear model is not a good fit?
+
+```{r Q2c}
+marketing %>% 
+  ggplot(aes(x = facebook, y = sales)) +
+  geom_point() + 
+  facet_wrap(~ cut_number(youtube, 4)) + 
+  geom_smooth(method = "lm")
+```
+
+
+  * There is a noticeably higher variability along the line in the above plot where advertisement budget for Youtube is less than \$90,000. 
+  
+  * There appears to be a linear relationship between facebook and sales (conditioned on advertisement budget on Youtube), however the fitted lines all appear to have different slopes.
+  
+    * Slopes appear to be steeper for higher values of advertisement budget for Youtube
+
+## (d)
+
+Consider the following interaction model (which has the same symbolic model formulae as `sales ~ facebook*youtube`) for data where the advertising budget for Youtube is at least \$90,000. Construct a QQ-plot of the residuals. Do you think the errors are normally distributed? Construct a lineup for the QQ-plot assuming that the null distribution is Normally distributed with mean zero and variance as estimated from the model fit.
+
+```{r, eval = FALSE, echo = TRUE}
+fit <- lm(sales ~ facebook + youtube + facebook:youtube, data = filter(marketing, youtube > 90))
+```
+
+
+```{r Q2d, message = TRUE}
+# Extract residuals
+gqq <- augment(fit) %>% 
+  ggplot(aes(sample = .resid)) +
+  stat_qq() +
+  stat_qq_line()
+gqq
+
+# Create lineup 
+gqq %+% lineup(null_dist(".resid", "norm", list(mean = 0, sd = sigma(fit))),
+               true = augment(fit)) +
+  facet_wrap(~.sample) +
+  theme(axis.text = element_blank(),
+        axis.title = element_blank(), 
+        aspect.ratio = 1)
+
+# decrypt("23eg MuPu NE KwWNPNwE FF")
+```
+
+
+
+# Quiz
+
+* Type 1 error: Rejecting $H_0$ when $H_0$ is actually true
+* Type 2 error: Failing to reject $H_0$ when $H_A$ is true
+
+In our case, the null hypothesis is that the defendant is innocent ($H_0$). Following the definition from above:
+
+* Type 1 error: Defendant is innocent ($H_0$ true) but wrongly convicted (reject $H_0$ in favour of $H_1$)
+* Type 2 error: Fail to convict person (fail to reject $H_0$) when defendant is guilty
+
+
+
+
+
+
+
+
+
+
+
