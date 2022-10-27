@@ -1,0 +1,461 @@
+---
+title: "ETC5521 Tutorial 11"
+subtitle: "Statistical inference for exploratory methods"
+author: "Dr Michael Lydeamore"
+date: "Week 12"
+output:
+  bookdown::html_document2:
+    toc: true
+    number_sections: false
+---
+
+```{css, echo = FALSE}
+.context, .question, .answer {
+  padding: 10px;
+  border: 1px solid black;
+  margin-bottom: 5px;
+}
+
+.context { background-color: #85C1E9; }
+.question { background-color: #A3E4D7; }
+.answer { background-color: #F9E79F; }
+
+
+.context::before, .question::before, .answer::before {
+  font-weight: bold;
+  font-style: italic;
+}
+
+.context::before { content: "Context";}
+.question::before { content: "Question";}
+.answer::before { content: "Answer";}
+
+```
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(
+  echo = FALSE, 
+  message = FALSE, 
+  warning = FALSE, 
+  cache = FALSE,
+  eval = FALSE,
+  cache.path = "cache/",
+  fig.path = "images/tutorial12/",
+  fig.align = "center"
+)
+```
+
+```{r libraries, include=FALSE}
+library(tidyverse)
+library(broom)
+library(GGally)
+library(patchwork)
+```
+
+# `r emo::ji("target")` Objectives
+
+This tutorial recaps the topics we have covered throughout the course.
+
+# Exercise 1: Initial Data Analysis
+
+Load the `galaxies` data in the `MASS` package and answer the following questions based on this dataset.
+
+```{r}
+data(galaxies, package = "MASS")
+```
+
+You can access documentation of the data (if available) using the `help` function specifying the package name in the argument. 
+
+```{r, eval = FALSE}
+help(galaxies, package = "MASS")
+```
+
+## (a) 
+
+What does the data contain? And what is the data source?
+
+* The data contains velocities in km/sec of `r length(galaxies)` galaxies from 6 well-separated conic sections of an unfilled survey of the Corona Borealis region. 
+
+* The original data is from Postman et al. (1986) and this data is from Roeder with 83rd observation removed from the original dataset as well as typo for the 78th observation.
+
+
+## (b)
+
+How many observations are there?
+
+There are `r length(galaxies)` observations.
+
+## (c)
+
+Draw a histogram, a boxplot and a density plot for this data. 
+
+```{r}
+# Create ggplot object as base
+p <- ggplot(tibble(velocity = galaxies), 
+            aes(x = velocity))
+
+p1 <- p + geom_histogram(binwidth = 1000, colour = "white")
+p2 <- p + geom_boxplot()
+p3 <- p + geom_density()
+
+# Combine plots
+(p1 / p2 & theme(axis.text.x = element_blank(),
+                 axis.ticks.x = element_blank(),
+                 axis.title = element_blank())) /
+  p3
+```
+
+
+## (d)
+
+Experiment with different bindwidths for the histogram and different bandwiths for the density plot. Which choices do you think are best for the conveying the information in the data?
+
+* Most galaxies have a velocity of ~ 21,000 km/sec
+* There are some galaxies which are much faster/slower than other galaxies
+  * some reach up ~ 34,500 km/h
+  * some are only at ~ 10,000 km/h
+
+# Exercise 2 Multivariate data
+
+The Australian Football League Women's (AFLW) is the national semi-professional Australia Rules football league for female players. Get the player statistics data for the 2020 season using this code:
+
+```{r}
+library(fitzRoy)
+aflw <- fetch_player_stats(season = 2020, comp = "AFLW")
+```
+
+Of the 70 variables in the data, 38 are numeric. An explanation of most player stats can be found [here](https://www.afl.com.au/news/144837/stats-glossary-every-stat-explained).
+
+
+::: {.question}
+
+## (a) 
+
+How many teams in the competition? How many players? How many rounds in the competition? 
+
+```{r, q2a}
+# Total teams
+aflw %>% count(team.name) %>% tally()
+
+# Total players
+aflw %>% count(player.playerId) %>% tally()
+
+# Rounds in the competition
+aflw %>% summarise(m = max(round.roundNumber)) 
+```
+
+## (b)
+
+The 2020 season was interrupted by COVID, so there was no winning team. Make an appropriate plot of the goals by team and suggest which team might have been likely to win if the season had played out.
+
+```{r}
+library(ggbeeswarm)
+
+aflw %>%
+  group_by(team.name, round.roundNumber) %>%
+  summarise(goals = sum(goals, na.rm = TRUE), .groups = 'drop') %>% 
+  ggplot(aes(x = fct_reorder(team.name, goals), y = goals)) +
+  # side-by-side dot plot
+  geom_quasirandom() + 
+  # Median goals scored
+  stat_summary(fun = median, 
+               geom = "point",
+               colour = "orange", alpha=0.8,
+               shape = 16, size = 3, show.legend = F) +
+  labs(x = "") +
+  coord_flip() 
+```
+
+* A side-by-side dot plot is a good choice for comparing the goals between teams. 
+
+* Adding an average or median value for each team and ordering by this is especially helpful. 
+
+* Fremantle had more goals on average than the other teams, and could have been considered a favourite to win the season.
+
+## (c) 
+
+If you were to make a pairs plot of the numeric variables, how many plots would you need to make? (DON'T MAKE THE PLOT!!!)
+
+```{r}
+aflw %>% 
+  select(is.numeric) %>% 
+  select(-c(1,2,3), -player.playerJumperNumber) %>% 
+  # look at first 10 variables
+  select(1:10) %>% 
+  GGally::ggpairs()
+```
+
+```{r}
+# Compute total number of plots
+choose(n = 34, k = 2)
+
+# p (p -1) / 2
+34*(34-1)/2
+```
+
+There are 34x33/2 = `r 34*33/2` possible pairs of plots. 
+
+
+## (d)
+
+Summarise the players, by computing the means for all of the statistics. On this data, one pair of variables variables has an L-shaped pattern. Use scagnostics to find the pair. Make the plot, report the scagnostic used. Write a sentence to explain the relationship between the two variables, in terms of players skills. 
+
+```{r}
+aflw <- aflw %>%
+  mutate(name = paste0(player.givenName, player.surname))
+
+aflw_player <- aflw %>%
+  group_by(name) %>%
+  summarise_if(is.numeric, mean)
+```
+
+```{r, eval = FALSE}
+library(cassowaryr)
+
+# Code takes long time to complete, see .rda file
+aflw_scags <- calc_scags_wide(aflw_player[,6:38])
+```
+
+```{r}
+# Read-in scagnostics 
+load(here::here("data/aflw_scags.rda"))
+
+# Remove groupings
+aflw_scags <- aflw_scags %>% ungroup()
+```
+
+```{r}
+# `metresGained` and `bounces` had high values of 'stringy'
+ggplot(aflw_player, aes(x = metresGained, y = hitouts)) +
+  geom_point() +
+  theme(aspect.ratio = 1)
+
+# `disposalEfficiency` and `hitouts` had high values of 'outlying'
+ggplot(aflw_player, aes(x = disposalEfficiency, y = hitouts)) +
+  geom_point() +
+  theme(aspect.ratio = 1)
+```
+
+
+
+## (e)
+
+Find a pair of variables that exhibit a barrier. Plot it and report the scagnostic used. Write sentence explaining the relationship.
+
+```{r}
+ggplot(aflw_player, aes(x = disposalEfficiency, y = bounces)) +
+  geom_point() +
+  theme(aspect.ratio = 1)
+```
+
+* The pair of variables high on stringy, `disposalEfficiency` and `bounces`, exhibits a barrier. 
+
+* As the number of bounces increases the disposal efficiency averages out. The highest (and lowest) rates of disposal efficiency happened when there were no bounces. 
+
+:::
+
+# Exercise 3: Visual Inference
+
+In the following questions, we are interested in comparing the two margarine brands. You can download the data as:
+
+```{r, load-cholestoral, eval=T, echo=T}
+cholesterol <- read_csv("https://gist.githubusercontent.com/MikeLydeamore/b3791b0bebdf0704537d3400a486b9c2/raw/8ae0c0abb8fdf557b476e8531f6a45a4f5a4963c/Cholesterol_R.csv")  %>% 
+  mutate(loss4weeks = After4weeks - Before) 
+```
+
+## (a)
+
+Conduct a two-sample $t$-test and a Wilcoxon rank sum test to compare the mean cholesterol reduction between the margarine brands after 4 weeks. What graphics best compares these measurements across the brands? What do you conclude from the results of the tests and your graphics?
+
+```{r}
+cholesterol %>% 
+  with(t.test(loss4weeks[Margarine == "A"], loss4weeks[Margarine == "B"]))
+```
+
+```{r}
+cholesterol %>% 
+  with(wilcox.test(loss4weeks[Margarine == "A"], loss4weeks[Margarine == "B"]))
+```
+
+* Both the $t$-test and Wilcoxon rank sum test indicate that the two brands have different mean cholesterol reduction after 4 weeks.
+
+```{r}
+ggplot(cholesterol, aes(Margarine, loss4weeks, color = Margarine)) +
+  ggbeeswarm::geom_quasirandom() +
+  labs(y = "Loss of cholesterol after 4 weeks on diet")
+```
+
+We also observe this in our plot where about half of the observations in Brand B have lower loss than brand A. 
+
+
+## (b)
+
+You have run a lineup using $m=4$ plots to compare the cholesterol reduction between the margarine brands after 8 weeks. You received the following responses from 100 participants: 21 picked plot 1, 22 plot 2, 50 plot 3 and 7 picked plot 4. Plot 3 is the data plot. Based on your responses calculate the p-value from your visual inference.
+
+```{r}
+nullabor::pvisual(
+  x = 50, # no. of correct
+  K = 100, # no. of observers
+  m = 4 # no. of plots in a lineup
+  )
+```
+
+* Binomial is a series of n Bernoulli trials
+  * *e.g.* one coin flip is one Bernoulli trial, 10 coin flips is a binomial model consisting of ten Bernoulli trials 
+
+## (c)
+
+You construct a set of lineups to compare the cholesterol reduction between the margarine brands after 8 weeks. The visual statistics used for the three lineups are: violin plot, boxplot, and dotplot. The lineups are shown to independent participant such that each participant will only see one lineup. The results from your visual inference experiment can be loaded using the code `read_csv("https://gist.github.com/9b001a7c0b0640ee30129ecbf60715cd")`; the data dictionary is provided in the table below. Use this result to answer the following.
+
+```{r, echo = FALSE, eval=TRUE}
+# Data dictionary
+tibble(
+  Variable = c(
+    "lineup_id",
+    "participant_id",
+    "nplots",
+    "vis",
+    "rep",
+    "detected"
+  ),
+  Decription = c(
+    "Lineup ID",
+    "Participant ID",
+    "Number of plots in the lineup.",
+    "The visual statistic used in the lineup. Either violin plot, boxplot or dotplot.",
+    "Replicate number.",
+    "Whether the participant detected the data plot or not."
+  )
+) %>%
+  knitr::kable() %>%
+  kableExtra::kable_classic(full_width = FALSE)
+```
+
+```{r, include = FALSE, eval = FALSE}
+# Made up pseudo results
+set.seed(2021)
+
+nrep <- 120
+
+results <- expand_grid(nplots = rep(c(8, 12, 20), each = 20),
+                       vis = c("violin", "boxplot", "dotplot"), 
+                       rep = 1:nrep) %>% 
+  mutate(participant_id = sample(sprintf("P%.3d", 1:n())),
+         lineup_id = rep(sprintf("L%.3d", 1:(n()/nrep)), each = nrep),
+         detected = case_when(vis == "violin" ~ sample(c("yes", "no"),
+                                                       size = length(vis=="violin"),
+                                                       prob = c(0.6, 0.4),
+                                                       replace = TRUE),
+                              vis == "boxplot" ~ sample(c("yes", "no"),
+                                                       size = length(vis=="boxplot"),
+                                                       prob = c(0.5, 0.5),
+                                                       replace = TRUE),
+                              vis == "dotplot" ~ sample(c("yes", "no"),
+                                                       size = length(vis=="dotplot"),
+                                                       prob = c(0.63, 0.4),
+                                                       replace = TRUE))) %>% 
+  select(lineup_id, participant_id, everything())
+
+write_csv(results, here::here("data/visinf_results.csv"))
+```
+
+(i) Calculate the power of each lineup and provide the mean power, and its standard deviation, for each visual statistic.
+
+
+```{r}
+results_raw <- read_csv("https://gist.githubusercontent.com/MikeLydeamore/9b001a7c0b0640ee30129ecbf60715cd/raw/753999b9a1f7d103891b07e346eef674a100f924/visinf_results.csv") 
+
+
+# Compute power for each participant's guess
+results <- results_raw %>% 
+  group_by(lineup_id) %>% 
+  summarise(power = sum(detected=="yes") / n() * 100, # power
+            vis = unique(vis), # visualisation
+            nplots = unique(nplots) # total no. of possible plots
+            )
+
+# Compute average power for each lineup
+results %>% 
+  group_by(vis, nplots) %>% 
+  summarise(n = n(),
+            power_avg = scales::comma(mean(power), 0.01),
+            power_sd = scales::comma(sd(power), 0.01)) %>% 
+  knitr::kable(
+    col.names = c(
+      "Visual statistic",
+      "# of plots in a lineup",
+      "N",
+      "Average Power (%)",
+      "SD Power (%)"), 
+    align = "lrr") %>% 
+  kableExtra::kable_classic(full_width = FALSE)
+```
+
+Power = total no. of correct guesses / total no. of observers 
+      = k / m
+
+* The results below indicate the that there is not much difference between the average power across the number of plots in the lineup (formal tests omitted here)
+
+* However, there is a noticeable difference in average power between boxplot and the remaining two visual statistics. 
+
+* Thus, the results indicate that violin plot or dotplot is more powerful than boxplot, although violin plot and dotplot look comparable in power (formal tests again omitted here). 
+
+
+(ii) Based on the results, which visual statistic is the most powerful and why?
+
+```{r}
+results %>% 
+  ggplot(aes(vis, power, color = factor(nplots))) +
+  ggbeeswarm::geom_quasirandom()
+```
+
+
+
+:::
+
+
+
+# Exercise 4: Model diagnostics
+
+::: {.question}
+
+Many inferences are based on assumptions being met, such as those that use confidence intervals, or $p$-values. From the model fit below, can we suggest that this is an appropriate model?
+
+:::
+
+$$\hat{Y} = -0.002 + 0.979x_1 + 0.998x_2 + 0.973x_3 + 0.995x_4$$
+
+```{r, echo=F}
+mystery_data <- read.csv(here::here("data/homeresplot.csv"))
+```
+
+```{r, echo=F, fig.height=6, eval=T, warning=FALSE}
+GGally::ggpairs(mystery_data,
+                progress = F)
+```
+
+```{r, echo = TRUE, eval=T}
+fit <- lm(y ~ x1 + x2 + x3 + x4, data = mystery_data) 
+
+broom::tidy(fit)
+glance(fit)
+```
+
+* null hypothesis: coefficient is equal to 0
+
+* if p-value $\le$ 0.05, predictor is significantly different 0 and the predictor is a meaningful addition to the model.
+
+```{r}
+# Residuals vs fitted
+augment(fit) %>% 
+  ggplot(aes(x = .fitted, y = .resid)) +
+  geom_point() +
+  labs(x = "Fitted values", y = "Residual")
+```
+
+The model fit does indeed suggest that this model would be a good fit to the data. **BUT** we haven't actually _seen_ the data or any model diagnostics! Of course, we weren't given the actual data so we couldn't do this ourselves here, but it is always important to check our diagnostics, and not be solely motivated by a $p$-value or a confidence interval.
+
+
+
+
+
